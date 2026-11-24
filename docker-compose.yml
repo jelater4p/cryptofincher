@@ -1,0 +1,20 @@
+services:
+  bot:
+    build: .
+    container_name: cryptofincher
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      KEYSTORE_PATH: /app/data/keystore.json
+    volumes:
+      - ./data:/app/data
+    # canlı modda keystore parolasını girmek için: docker attach cryptofincher
+    # (parolayı yazın, sonra Ctrl+P Ctrl+Q ile ayrılın)
+    stdin_open: true
+    tty: true
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"

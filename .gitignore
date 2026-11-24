@@ -221,3 +221,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# cryptofincher runtime data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+keystore*.json
+!keystore.example.json
