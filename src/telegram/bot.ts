@@ -38,7 +38,7 @@ const HELP = `CryptoFincher komutları
 /kesiftoken <mint>: bir tokenın erken alıcılarını keşfet
 /cuzdanekle <adres> [etiket]: manuel cüzdan ekle
 /cuzdanlar: en iyi cüzdanlar
-/cuzdan <adres>: cüzdan raporu
+/cuzdan <sıra no | adres>: cüzdan raporu (örn: /cuzdan 1)
 /analiz [adres]: cüzdanı (ya da bekleyenleri) analiz et
 /zenginlestir: giriş öncesi fiyat hareketlerini ekle
 /cikar: stratejileri yeniden çıkar
@@ -59,6 +59,39 @@ const HELP = `CryptoFincher komutları
 /dur: yeni girişleri durdur (açık pozisyonlar yönetilmeye devam eder)
 /panik: her şeyi durdur ve tüm pozisyonları sat
 /devam: motoru devam ettir`;
+
+export const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+type StoredReport = ReturnType<typeof storedReports>[number];
+
+/**
+ * /cuzdan argümanını çözer: sıra numarası (/cuzdanlar sırası), tam adres ya da adresin başı (en az 4 harf).
+ * Başlangıç birden fazla cüzdana uyuyorsa 'ambiguous'.
+ */
+export function resolveWalletRef(ref: string, reports: StoredReport[]): StoredReport | 'ambiguous' | undefined {
+  if (/^\d{1,4}$/.test(ref)) return reports[Number(ref) - 1];
+  const exact = reports.find((r) => r.address === ref);
+  if (exact) return exact;
+  if (ref.length < 4) return undefined;
+  const matches = reports.filter((r) => r.address.startsWith(ref));
+  return matches.length > 1 ? 'ambiguous' : matches[0];
+}
+
+/** Skora göre sıralı cüzdan listesi; tam adres dokununca kopyalanır (HTML) */
+export function formatWalletList(reports: StoredReport[], max = 15): string {
+  const lines = reports.slice(0, max).map(
+    (r, i) =>
+      `${i + 1}. ${r.eligible ? '✅' : '⛔'} skor ${r.score.toFixed(0)} | kazanma %${Math.round(r.metrics.winRate * 100)} | PnL ${r.metrics.realizedPnlSol.toFixed(1)} SOL | ${r.metrics.closedTrips} işlem\n<code>${r.address}</code>`,
+  );
+  const eligible = reports.filter((r) => r.eligible).length;
+  return [
+    `Cüzdanlar (skora göre, ${eligible}/${reports.length} uygun). Adrese dokununca kopyalanır.`,
+    '',
+    lines.join('\n\n'),
+    '',
+    'Detay: /cuzdan 1 (sıra no) ya da /cuzdan <adresin ilk harfleri>',
+  ].join('\n');
+}
 
 /** Gruplarda komut menüsünden seçilen komut "/start@BotAdı" biçiminde gelir */
 export function isStartCommand(text?: string): boolean {
@@ -177,23 +210,25 @@ export function startTelegram(engine: TradingEngine) {
   });
 
   bot.command('cuzdanlar', (ctx) => {
-    const rows = storedReports().slice(0, 15);
+    const rows = storedReports();
     if (!rows.length) return ctx.reply('Henüz analiz edilmiş cüzdan yok. /kesif ya da /cuzdanekle');
-    const lines = rows.map(
-      (r) =>
-        `${r.eligible ? '✅' : '⛔'} ${r.score.toFixed(0)} | ${r.address.slice(0, 6)}…${r.address.slice(-4)} | kazanma %${Math.round(r.metrics.winRate * 100)} | PnL ${r.metrics.realizedPnlSol.toFixed(1)} SOL | ${r.metrics.closedTrips} işlem`,
-    );
-    return ctx.reply(['Skor | Cüzdan | Kazanma | PnL | İşlem', ...lines].join('\n'));
+    return ctx.reply(formatWalletList(rows), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
   });
 
   bot.command('cuzdan', (ctx) => {
-    const addr = arg(ctx)[0];
-    const r = storedReports().find((x) => x.address === addr);
-    if (!r) return ctx.reply('Rapor yok. Önce /analiz <adres>');
+    const ref = arg(ctx)[0];
+    if (!ref) return ctx.reply('Kullanım: /cuzdan <sıra no | adres | adresin ilk harfleri>\nÖrn: /cuzdan 1');
+    const found = resolveWalletRef(ref, storedReports());
+    if (found === 'ambiguous') return ctx.reply('Bu başlangıçla birden fazla cüzdan var; birkaç harf daha yaz.');
+    if (!found) return ctx.reply('Rapor yok. Sıra numarası için /cuzdanlar, yeni cüzdan için /analiz <adres>');
+    const r = found;
+    const addr = r.address;
     const m = r.metrics;
-    return ctx.reply(
-      [
-        `${addr}`,
+    const header = [
+      `<code>${addr}</code>`,
+      `<a href="https://solscan.io/account/${addr}">Solscan</a> · <a href="https://gmgn.ai/sol/address/${addr}">GMGN</a>`,
+    ];
+    const body = [
         `Skor: ${r.score} ${r.eligible ? '✅ uygun' : '⛔ uygun değil'}`,
         r.flags.length ? `Bayraklar: ${r.flags.map((f) => FLAG_DESCRIPTIONS[f]).join('; ')}` : 'Bayrak yok',
         '',
@@ -211,8 +246,11 @@ export function startTelegram(engine: TradingEngine) {
         m.enrichedTrips
           ? `• Giriş öncesi 5dk fiyat: %${round(m.medianPreChange5m, 1)}, hacim artışı x${round(m.medianVolumeSurge, 1)}, hareketin %${Math.round(m.medianCaptureRatio * 100)}'ini yakalıyor`
           : '• Bağlam verisi yok (/zenginlestir)',
-      ].join('\n'),
-    );
+    ];
+    return ctx.reply([...header, ...body.map(escapeHtml)].join('\n'), {
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+    });
   });
 
   bot.command('analiz', (ctx) => {
