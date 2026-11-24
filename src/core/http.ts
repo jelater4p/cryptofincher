@@ -25,6 +25,8 @@ export interface FetchJsonOptions {
   limiter?: RateLimiter;
   retries?: number;
   timeoutMs?: number;
+  /** true dönerse yeniden denenmez (örn. kredi bittiğinde 429'u tekrar denemek boşuna) */
+  noRetryIf?: (status: number, body: string) => boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -53,7 +55,7 @@ export async function fetchJson<T>(url: string, opts: FetchJsonOptions = {}): Pr
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
-        const retryable = res.status === 429 || res.status >= 500;
+        const retryable = (res.status === 429 || res.status >= 500) && !opts.noRetryIf?.(res.status, text);
         if (retryable && attempt < retries) {
           const ra = Number(res.headers.get('retry-after'));
           const wait = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 500 * 2 ** attempt;

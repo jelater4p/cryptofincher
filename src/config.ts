@@ -79,6 +79,11 @@ const schema = z.object({
   PUMPFUN_STREAM: bool,
 
   // --- Analiz ---
+  /** 0 = kapalı. Örn 24: günde bir keşif → analiz → strateji çıkarımı (yeniden başlatmada sayaç korunur) */
+  DISCOVERY_INTERVAL_HOURS: num(0),
+  /** API limiti dolunca Telegram'a kaç saatte bir hatırlatma gönderilsin */
+  ALERT_REPEAT_HOURS: num(2),
+
   ANALYSIS_MAX_TX_PER_WALLET: num(400),
   ANALYSIS_MIN_CLOSED_POSITIONS: num(8),
   DISCOVERY_EARLY_BUYERS_PER_TOKEN: num(60),

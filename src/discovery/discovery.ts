@@ -2,7 +2,7 @@ import { config } from '../config.js';
 import { childLogger } from '../core/logger.js';
 import type { TokenInfo } from '../core/types.js';
 import { dexscreener } from '../data/dexscreener.js';
-import { helius } from '../data/helius.js';
+import { helius, HeliusLimitError } from '../data/helius.js';
 import { parseWalletTx } from '../analysis/swapParser.js';
 import { solPriceService } from '../data/solPrice.js';
 import { tokens, wallets } from '../storage/repo.js';
@@ -92,6 +92,7 @@ export async function runDiscovery(maxTokens = 3) {
     try {
       all.push(...(await discoverFromToken(t.mint)));
     } catch (err) {
+      if (err instanceof HeliusLimitError) throw err;
       log.warn({ mint: t.mint, err: String(err) }, 'keşif başarısız');
     }
   }

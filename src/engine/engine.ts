@@ -30,6 +30,8 @@ export class TradingEngine {
   private busy = { scan: false, positions: false };
   /** güvenlik kontrolünden geçemeyen tokenlar tekrar sorgulanmaz */
   private rejected = new Map<string, number>();
+  /** başarısız satış bildirimlerini seyreltmek için: pozisyon id → son bildirim */
+  private sellFailNotified = new Map<number, number>();
 
   constructor(
     private executors: { paper: Executor; live?: Executor },
@@ -263,7 +265,12 @@ export class TradingEngine {
       );
     } catch (err) {
       log.warn({ id: p.id, err: String(err) }, 'satış başarısız');
-      events.emit('notify', `⚠️ Satış başarısız: ${p.symbol ?? p.mint} (${reason}): ${String(err).slice(0, 200)}`);
+      // pozisyon her 5 sn'de yeniden denenir: aynı pozisyon için en fazla 15 dk'da bir bildirim
+      const last = this.sellFailNotified.get(p.id) ?? 0;
+      if (Date.now() - last >= 15 * 60_000) {
+        this.sellFailNotified.set(p.id, Date.now());
+        events.emit('notify', `⚠️ Satış başarısız: ${p.symbol ?? p.mint} (${reason}): ${String(err).slice(0, 200)}\nYeniden deneniyor.`);
+      }
     }
   }
 

@@ -6,6 +6,7 @@ import { analyzeWallet, storedReports } from '../analysis/walletAnalyzer.js';
 import { FLAG_DESCRIPTIONS } from '../analysis/scoring.js';
 import { runBacktest } from '../backtest/runner.js';
 import { heliusCredits } from '../data/helius.js';
+import { heliusAlert } from '../data/heliusAlert.js';
 import { discoverFromToken } from '../discovery/discovery.js';
 import type { TradingEngine } from '../engine/engine.js';
 import { positionsRepo } from '../engine/positionsRepo.js';
@@ -102,7 +103,12 @@ export function startTelegram(engine: TradingEngine) {
         `Bakiye: ${bal} SOL`,
         `Açık pozisyon: ${positionsRepo.countOpen()}`,
         `Aktif strateji: ${active.length ? active.map((s) => `${s.id} (${s.name})`).join(', ') : 'yok: /stratejiler'}`,
-        `Helius kredi (bu ay): ${heliusCredits.used().toLocaleString()} / ${heliusCredits.limit().toLocaleString()}`,
+        `Helius kredi (bu ay, bu anahtar): ${heliusCredits.used().toLocaleString()} / ${heliusCredits.limit().toLocaleString()}`,
+        (() => {
+          const a = heliusAlert.get();
+          return a ? `Helius: ⛔ ${a.kind === 'budget' ? 'bütçe doldu' : a.kind === 'quota' ? 'kredi/limit bitti' : 'anahtar geçersiz'} (${a.detail})` : 'Helius: ✅ normal';
+        })(),
+        `Otomatik keşif: ${config.DISCOVERY_INTERVAL_HOURS > 0 ? `${config.DISCOVERY_INTERVAL_HOURS} saatte bir` : 'kapalı'}`,
         `Cüzdan: ${wallets.list('active').length} aktif / ${wallets.list().length} toplam`,
         `Arka plan işi: ${currentJob() ?? 'yok'}`,
       ].join('\n'),

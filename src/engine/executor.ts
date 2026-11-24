@@ -2,9 +2,9 @@ import { Connection, VersionedTransaction, type Keypair } from '@solana/web3.js'
 import { config } from '../config.js';
 import { SOL_MINT } from '../core/constants.js';
 import { childLogger } from '../core/logger.js';
-import { helius } from '../data/helius.js';
+import { helius, HeliusLimitError } from '../data/helius.js';
 import { jupiter, priceImpactPercent } from '../data/jupiter.js';
-import { kv } from '../storage/repo.js';
+import { kv, tokens } from '../storage/repo.js';
 
 const log = childLogger('executor');
 
@@ -24,13 +24,18 @@ export interface Executor {
 }
 
 const decimalsCache = new Map<string, number>();
+/** Ondalık bilgisi veritabanında da saklanır: Helius erişilemezken ya da yeniden başlatmadan sonra satış yapılabilsin */
 async function decimalsOf(mint: string): Promise<number> {
   if (mint === SOL_MINT) return 9;
-  const hit = decimalsCache.get(mint);
-  if (hit !== undefined) return hit;
+  const hit = decimalsCache.get(mint) ?? tokens.get(mint)?.decimals;
+  if (hit !== undefined) {
+    decimalsCache.set(mint, hit);
+    return hit;
+  }
   const info = await helius.getMintInfo(mint);
   if (!info) throw new Error(`decimals alınamadı: ${mint}`);
   decimalsCache.set(mint, info.decimals);
+  tokens.upsert({ mint, decimals: info.decimals });
   return info.decimals;
 }
 
@@ -126,9 +131,15 @@ export class LiveExecutor implements Executor {
 
   async sell(mint: string, tokenAmount: number, slippageBps: number): Promise<FillResult> {
     const dec = await decimalsOf(mint);
-    // zincirdeki gerçek bakiyeyi aşma (yuvarlama/transfer ücreti farkları)
-    const onchain = await helius.getTokenBalance(this.address, mint);
-    const qty = Math.min(tokenAmount, onchain);
+    // zincirdeki gerçek bakiyeyi aşma (yuvarlama/transfer ücreti farkları).
+    // Helius erişilemezse kayıttaki miktarla denenir: Jupiter yetersiz bakiyede işlemi zaten oluşturmaz.
+    let qty = tokenAmount;
+    try {
+      qty = Math.min(tokenAmount, await helius.getTokenBalance(this.address, mint));
+    } catch (err) {
+      if (!(err instanceof HeliusLimitError)) throw err;
+      log.warn({ mint }, 'Helius erişilemiyor: zincir bakiyesi yerine kayıttaki miktarla satılıyor');
+    }
     if (qty <= 0) throw new Error('satılacak token bakiyesi yok');
     const r = await this.swap(mint, SOL_MINT, toAtomic(qty, dec), slippageBps);
     const sold = Number(r.inAtomic) / 10 ** dec;
