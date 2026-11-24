@@ -61,7 +61,13 @@ export interface TokenInfo {
   supply?: number;
   pairAddress?: string;
   dexId?: string;
-  pairCreatedAt?: number; // ms
+  /** fiyat/likidite için kullanılan (en likit) havuzun açılışı, ms */
+  pairCreatedAt?: number;
+  /**
+   * Tokenın piyasaya çıkışı: tüm havuzları arasındaki en erken açılış, ms. pump.fun tokenı PumpSwap'a
+   * geçince en likit havuz değişir; token yaşı ve giriş gecikmesi bu alanla hesaplanmalı.
+   */
+  launchedAt?: number;
   priceUsd?: number;
   priceSol?: number;
   liquidityUsd?: number;
@@ -80,3 +86,8 @@ export interface TokenInfo {
 }
 
 export type MarketSegment = 'memecoin' | 'established';
+
+/** Token yaşının başlangıcı: çıkış zamanı, bilinmiyorsa havuz açılışı (ms) */
+export function tokenLaunchMs(t: Pick<TokenInfo, 'launchedAt' | 'pairCreatedAt'>): number | undefined {
+  return t.launchedAt ?? t.pairCreatedAt;
+}

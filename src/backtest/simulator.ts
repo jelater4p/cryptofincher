@@ -21,7 +21,10 @@ export interface SimTrade {
 
 export interface TokenMeta {
   mint: string;
+  /** mumların ait olduğu havuzun açılışı (sn) */
   pairCreatedAtSec: number;
+  /** tokenın piyasaya çıkışı (sn); token yaşı buna göre hesaplanır, yoksa havuz açılışı */
+  launchedAtSec?: number;
   supply: number;
 }
 
@@ -44,6 +47,7 @@ export function simulateToken(spec: StrategySpec, meta: TokenMeta, candles: Cand
     const snap = {
       mint: meta.mint,
       pairCreatedAt: meta.pairCreatedAtSec * 1000,
+      launchedAt: (meta.launchedAtSec ?? meta.pairCreatedAtSec) * 1000,
       marketCapUsd: c.c * meta.supply,
       liquidityUsd: Infinity,
       priceChangeM5: prev.c > 0 ? (c.c / prev.c - 1) * 100 : 0,

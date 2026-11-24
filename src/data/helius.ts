@@ -208,15 +208,13 @@ export class HeliusClient {
     return res.value / 1e9;
   }
 
-  async getTokenBalance(owner: string, mint: string): Promise<number> {
+  /** Cüzdandaki token bakiyesi, taban birimde (tam sayı): satışta yuvarlama hatası olmasın diye */
+  async getTokenBalanceAtomic(owner: string, mint: string): Promise<bigint> {
     const res = await this.rpc<{
       value: Array<{ account: { data: { parsed: { info: { tokenAmount: { uiAmount: number | null; amount: string; decimals: number } } } } } }>;
     }>('getTokenAccountsByOwner', [owner, { mint }, { encoding: 'jsonParsed' }], 'trading');
-    let total = 0;
-    for (const a of res.value) {
-      const t = a.account.data.parsed.info.tokenAmount;
-      total += Number(t.amount) / 10 ** t.decimals;
-    }
+    let total = 0n;
+    for (const a of res.value) total += BigInt(a.account.data.parsed.info.tokenAmount.amount);
     return total;
   }
 }

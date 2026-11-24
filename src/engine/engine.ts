@@ -1,19 +1,28 @@
 import { config } from '../config.js';
+import { HttpError } from '../core/http.js';
 import { childLogger } from '../core/logger.js';
 import type { TokenInfo } from '../core/types.js';
 import { dexscreener } from '../data/dexscreener.js';
+import { jupiter } from '../data/jupiter.js';
 import { startPumpfunStream } from '../data/pumpfunStream.js';
 import { solPriceService } from '../data/solPrice.js';
 import { kv, tokens as tokenRepo } from '../storage/repo.js';
 import { strategies } from '../strategy/registry.js';
 import { decideExit, evaluateEntry } from '../strategy/rules.js';
 import type { StrategySpec } from '../strategy/types.js';
-import type { Executor } from './executor.js';
+import { NoBalanceError, type Executor } from './executor.js';
 import { positionsRepo, type PositionRow } from './positionsRepo.js';
 import { checkTokenSafety } from './safety.js';
 import { engineState, events } from './state.js';
 
 const log = childLogger('engine');
+
+/** Jupiter "bu token için rota/likidite yok" hatası mı (ağ ve sunucu hataları hariç) */
+export function isNoRouteError(err: unknown): boolean {
+  if (err instanceof HttpError && (err.status >= 500 || err.status === 429)) return false;
+  const msg = err instanceof HttpError ? err.body : String(err);
+  return /route|not.?tradable|no liquidity|insufficient liquidity/i.test(msg);
+}
 
 /** Pozisyon büyüklüğü: özsermayenin yüzdesi, rezerv ve bakiye ile sınırlı (saf) */
 export function positionSize(spec: StrategySpec, equitySol: number, freeSol: number, reserveSol: number): number {
@@ -32,6 +41,11 @@ export class TradingEngine {
   private rejected = new Map<string, number>();
   /** başarısız satış bildirimlerini seyreltmek için: pozisyon id → son bildirim */
   private sellFailNotified = new Map<number, number>();
+  /** satışın ilk başarısız olduğu an: paper modda uzun süre satılamayan pozisyon kapatılır */
+  private sellFailSince = new Map<number, number>();
+  /** fiyatın ilk alınamadığı an ve uyarı gönderilip gönderilmediği */
+  private noPriceSince = new Map<number, number>();
+  private noPriceNotified = new Set<number>();
 
   constructor(
     private executors: { paper: Executor; live?: Executor },
@@ -187,26 +201,75 @@ export class TradingEngine {
     return v;
   }
 
+  /**
+   * Açık pozisyonların fiyatı: önce DexScreener, alınamazsa Jupiter. Biri çökse bile pozisyonlar yönetilir.
+   */
+  private async positionPrices(mints: string[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    const infos = await dexscreener.tokens(mints).catch((err) => {
+      log.warn({ err: String(err) }, 'DexScreener fiyatı alınamadı, Jupiter deneniyor');
+      return new Map<string, TokenInfo>();
+    });
+    const solUsd = await solPriceService.now().catch(() => undefined);
+    for (const [mint, info] of infos) {
+      tokenRepo.upsert(info);
+      const price = info.priceSol ?? (info.priceUsd && solUsd ? info.priceUsd / solUsd : undefined);
+      if (price && price > 0) out.set(mint, price);
+    }
+    const missing = mints.filter((m) => !out.has(m));
+    if (missing.length && solUsd) {
+      const jp = await jupiter.prices(missing).catch(() => ({}) as Record<string, { usdPrice: number }>);
+      for (const m of missing) {
+        const usd = jp[m]?.usdPrice;
+        if (usd && usd > 0) out.set(m, usd / solUsd);
+      }
+    }
+    return out;
+  }
+
   async positionTick() {
     if (this.busy.positions) return;
     const open = positionsRepo.listOpen();
     if (!open.length) return;
     this.busy.positions = true;
     try {
-      const infos = await dexscreener.tokens([...new Set(open.map((p) => p.mint))]);
-      const solUsd = await solPriceService.now().catch(() => undefined);
+      const prices = await this.positionPrices([...new Set(open.map((p) => p.mint))]);
       for (const p of open) {
-        const info = infos.get(p.mint);
-        if (!info) continue;
-        tokenRepo.upsert(info);
-        const price = info.priceSol ?? (info.priceUsd && solUsd ? info.priceUsd / solUsd : undefined);
-        if (!price) continue;
+        const price = prices.get(p.mint);
+        if (price === undefined) {
+          await this.handleNoPrice(p);
+          continue;
+        }
+        this.noPriceSince.delete(p.id);
+        this.noPriceNotified.delete(p.id);
         await this.manage(p, price);
       }
     } catch (err) {
       log.warn({ err: String(err) }, 'pozisyon kontrol hatası');
     } finally {
       this.busy.positions = false;
+    }
+  }
+
+  /**
+   * Fiyat hiçbir kaynaktan alınamıyor (rug, listeden çıkma, kaynakların çökmesi). Zarar kesme fiyatsız
+   * çalışamaz; ama maksimum tutma süresi yine uygulanır ve 10 dakikayı geçerse bir kez uyarılır.
+   */
+  private async handleNoPrice(p: PositionRow, now = Date.now()) {
+    const spec = strategies.get(p.strategy_id)?.spec;
+    if (spec && now - p.opened_at >= spec.exit.maxHoldSec * 1000) {
+      await this.sell(p, p.remaining_tokens, 'max_hold', p.tp_hits, spec.execution.slippageBps);
+      return;
+    }
+    const since = this.noPriceSince.get(p.id) ?? now;
+    this.noPriceSince.set(p.id, since);
+    if (now - since >= 10 * 60_000 && !this.noPriceNotified.has(p.id)) {
+      this.noPriceNotified.add(p.id);
+      events.emit(
+        'notify',
+        `⚠️ ${p.mode === 'paper' ? '[PAPER] ' : ''}${p.symbol ?? p.mint.slice(0, 6)} için 10 dakikadır fiyat alınamıyor (rug olmuş ya da listeden çıkmış olabilir). ` +
+          `Fiyat yokken zarar kesme çalışamaz; maksimum tutma süresi dolunca satış denenecek. Hemen çıkmak için /panik.`,
+      );
     }
   }
 
@@ -269,6 +332,7 @@ export class TradingEngine {
     }
     try {
       const fill = await ex.sell(p.mint, tokens, slippageBps);
+      this.sellFailSince.delete(p.id);
       positionsRepo.recordSell(p.id, { tokens: fill.tokenAmount, sol: fill.solAmount, price: fill.priceSol, signature: fill.signature, reason, tpHits });
       const after = positionsRepo.get(p.id)!;
       const pnl = after.status === 'closed' ? after.proceeds_sol - after.cost_sol : null;
@@ -280,6 +344,22 @@ export class TradingEngine {
       );
     } catch (err) {
       log.warn({ id: p.id, err: String(err) }, 'satış başarısız');
+      if (err instanceof NoBalanceError) {
+        // cüzdanda token kalmamış (elle satılmış, transfer edilmiş ya da toz): satışı sonsuza kadar denemek anlamsız
+        if (positionsRepo.forceClose(p.id, 'no_balance'))
+          events.emit('notify', `ℹ️ ${p.symbol ?? p.mint.slice(0, 6)}: cüzdanda token kalmadığı için pozisyon kapatıldı.`);
+        return;
+      }
+      // sadece "rota/likidite yok" hataları sayılır; Jupiter'in çökmesi ya da ağ hatası sağlam pozisyonu sıfırlamamalı
+      const failSince = isNoRouteError(err) ? (this.sellFailSince.get(p.id) ?? Date.now()) : undefined;
+      if (failSince !== undefined) this.sellFailSince.set(p.id, failSince);
+      if (p.mode === 'paper' && failSince !== undefined && Date.now() - failSince >= 30 * 60_000) {
+        // paper'da 30 dk boyunca satılamayan token (likidite yok/rug) gerçekte de satılamazdı: 0 değerle kapat
+        this.sellFailSince.delete(p.id);
+        if (positionsRepo.forceClose(p.id, 'unsellable'))
+          events.emit('notify', `🔴 [PAPER] ${p.symbol ?? p.mint.slice(0, 6)} 30 dakikadır satılamıyor (likidite yok ya da rug). Kalan tokenlar 0 değerle kapatıldı.`);
+        return;
+      }
       // pozisyon her 5 sn'de yeniden denenir: aynı pozisyon için en fazla 15 dk'da bir bildirim
       const last = this.sellFailNotified.get(p.id) ?? 0;
       if (Date.now() - last >= 15 * 60_000) {

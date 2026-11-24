@@ -1,4 +1,4 @@
-import type { TokenInfo } from '../core/types.js';
+import { tokenLaunchMs, type TokenInfo } from '../core/types.js';
 import type { StrategySpec } from './types.js';
 
 export interface EntryDecision {
@@ -10,9 +10,10 @@ export interface EntryDecision {
 export function evaluateEntry(spec: StrategySpec, t: TokenInfo, nowMs = Date.now()): EntryDecision {
   const r: string[] = [];
   const e = spec.entry;
-  if (t.pairCreatedAt === undefined) r.push('havuz yaşı bilinmiyor');
+  const launch = tokenLaunchMs(t);
+  if (launch === undefined) r.push('havuz yaşı bilinmiyor');
   else {
-    const age = (nowMs - t.pairCreatedAt) / 1000;
+    const age = (nowMs - launch) / 1000;
     if (age < e.minPoolAgeSec) r.push(`havuz çok yeni (${Math.round(age)}sn)`);
     if (age > e.maxPoolAgeSec) r.push(`havuz çok eski (${Math.round(age)}sn)`);
   }

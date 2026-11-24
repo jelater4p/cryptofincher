@@ -60,6 +60,14 @@ export function pairToTokenInfo(p: DexPair): TokenInfo {
   };
 }
 
+/** Tokenın tüm Solana çiftleri arasındaki en erken açılış (piyasaya çıkış) */
+export function launchTime(pairs: DexPair[], mint: string): number | undefined {
+  const times = pairs
+    .filter((p) => p.chainId === 'solana' && p.baseToken.address === mint && p.pairCreatedAt)
+    .map((p) => p.pairCreatedAt!);
+  return times.length ? Math.min(...times) : undefined;
+}
+
 /** Bir token için en likit Solana çiftini seçer */
 export function bestPair(pairs: DexPair[], mint: string): DexPair | undefined {
   return pairs
@@ -78,7 +86,7 @@ export const dexscreener = {
       });
       for (const mint of chunk) {
         const p = bestPair(pairs ?? [], mint);
-        if (p) out.set(mint, pairToTokenInfo(p));
+        if (p) out.set(mint, { ...pairToTokenInfo(p), launchedAt: launchTime(pairs ?? [], mint) });
       }
     }
     return out;

@@ -20,6 +20,7 @@ import { extractFromWallets, runExtraction } from '../strategy/pipeline.js';
 import { strategies } from '../strategy/registry.js';
 import { buildDailySummary, collectSummaryData } from '../summary.js';
 import { pumpfunStreamStats } from '../data/pumpfunStream.js';
+import { solPriceService } from '../data/solPrice.js';
 
 const log = childLogger('telegram');
 const SOLANA_ADDR = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -59,6 +60,11 @@ const HELP = `CryptoFincher komutları
 /panik: her şeyi durdur ve tüm pozisyonları sat
 /devam: motoru devam ettir`;
 
+/** Gruplarda komut menüsünden seçilen komut "/start@BotAdı" biçiminde gelir */
+export function isStartCommand(text?: string): boolean {
+  return !!text && /^\/start(@\w+)?(\s|$)/.test(text.trim());
+}
+
 export function startTelegram(engine: TradingEngine) {
   if (!config.TELEGRAM_BOT_TOKEN) {
     log.warn('TELEGRAM_BOT_TOKEN yok: Telegram kapalı');
@@ -71,7 +77,7 @@ export function startTelegram(engine: TradingEngine) {
   bot.use(async (ctx, next) => {
     const id = String(ctx.chat?.id ?? '');
     if (!allowed.has(id)) {
-      if (ctx.message?.text === '/start') await ctx.reply(`Yetkisiz. Chat ID: ${id} (TELEGRAM_ALLOWED_CHAT_IDS'e ekleyin)`);
+      if (isStartCommand(ctx.message?.text)) await ctx.reply(`Yetkisiz. Chat ID: ${id} (TELEGRAM_ALLOWED_CHAT_IDS'e ekleyin)`);
       return;
     }
     await next();
@@ -129,9 +135,11 @@ export function startTelegram(engine: TradingEngine) {
   bot.command('pozisyonlar', async (ctx) => {
     const open = positionsRepo.listOpen();
     if (!open.length) return ctx.reply('Açık pozisyon yok.');
+    const solUsd = await solPriceService.now().catch(() => undefined);
     const lines = open.map((p) => {
       const t = tokens.get(p.mint);
-      const cur = t?.priceSol;
+      // SOL dışı çiftlerde priceSol yok: USD fiyatından çevrilir
+      const cur = t?.priceSol ?? (t?.priceUsd && solUsd ? t.priceUsd / solUsd : undefined);
       const mult = cur ? cur / p.entry_price_sol : NaN;
       return `${p.mode === 'paper' ? '📝' : '💰'} ${p.symbol ?? p.mint.slice(0, 6)} [${p.strategy_id}] ${p.cost_sol.toFixed(3)} SOL, x${Number.isFinite(mult) ? mult.toFixed(2) : '?'}, TP ${p.tp_hits}, ${fmtDuration((Date.now() - p.opened_at) / 1000)}`;
     });

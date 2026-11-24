@@ -133,8 +133,11 @@ export const seen = {
 // ---------------- Tokens ----------------
 export const tokens = {
   upsert(info: TokenInfo) {
-    const prev = tokens.get(info.mint) ?? {};
+    const prev: Partial<TokenInfo> = tokens.get(info.mint) ?? {};
     const merged: TokenInfo = { ...prev, ...stripUndefined(info), mint: info.mint, updatedAt: Date.now() };
+    // çıkış zamanı sadece geriye gidebilir: sonraki bir sorguda eski havuz listelenmese bile kaybolmasın
+    const launches = [prev.launchedAt, info.launchedAt].filter((x): x is number => typeof x === 'number');
+    if (launches.length) merged.launchedAt = Math.min(...launches);
     getDb()
       .prepare(
         'INSERT INTO tokens(mint, json, updated_at) VALUES(?, ?, ?) ON CONFLICT(mint) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at',

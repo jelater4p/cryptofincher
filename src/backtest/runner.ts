@@ -1,5 +1,5 @@
 import { childLogger } from '../core/logger.js';
-import type { TokenInfo } from '../core/types.js';
+import { tokenLaunchMs, type TokenInfo } from '../core/types.js';
 import { geckoterminal, type Timeframe } from '../data/geckoterminal.js';
 import { getDb } from '../storage/db.js';
 import { tokens as tokenRepo, type Candle } from '../storage/repo.js';
@@ -50,10 +50,10 @@ export function filterUniverse(spec: StrategySpec, all: TokenInfo[], window?: Ti
     .filter((t) => (spec.segment === 'memecoin') === isMemeToken(t.mint, t.marketCapUsd))
     .filter((t) => {
       if (!window) return true;
-      const created = t.pairCreatedAt! / 1000;
+      const created = tokenLaunchMs(t)! / 1000;
       return isLongHorizon(spec) ? created < window.to : created >= window.from && created < window.to;
     })
-    .sort((a, b) => (a.pairCreatedAt ?? 0) - (b.pairCreatedAt ?? 0));
+    .sort((a, b) => (tokenLaunchMs(a) ?? 0) - (tokenLaunchMs(b) ?? 0));
 }
 
 /**
@@ -95,7 +95,7 @@ export function pickUniverse(
   if (u.length >= MIN_UNBIASED) return { tokens: spreadSample(u, max), source: 'unbiased', unbiasedAvailable: u.length };
   const seen = new Set(u.map((t) => t.mint));
   const merged = [...u, ...filterUniverse(spec, observed, window).filter((t) => !seen.has(t.mint))].sort(
-    (a, b) => (a.pairCreatedAt ?? 0) - (b.pairCreatedAt ?? 0),
+    (a, b) => (tokenLaunchMs(a) ?? 0) - (tokenLaunchMs(b) ?? 0),
   );
   return { tokens: spreadSample(merged, max), source: 'mixed', unbiasedAvailable: u.length };
 }
@@ -141,6 +141,8 @@ export async function collectTrades(
   const trades: SimTrade[] = [];
   for (const t of universe) {
     const created = Math.floor(t.pairCreatedAt! / 1000);
+    // giriş penceresi token yaşına göre (çıkıştan itibaren); mumlar ise havuzun açılışından başlar
+    const launched = Math.floor((tokenLaunchMs(t) ?? t.pairCreatedAt!) / 1000);
     const supply = t.supply ?? (t.marketCapUsd && t.priceUsd ? t.marketCapUsd / t.priceUsd : undefined);
     if (opts.stats) opts.stats.attempted++;
     if (!supply) {
@@ -154,7 +156,7 @@ export async function collectTrades(
       to = Math.min(nowSec, opts.window ? opts.window.to + spec.exit.maxHoldSec : nowSec);
     } else {
       from = created;
-      to = Math.min(nowSec, created + spec.entry.maxPoolAgeSec + spec.exit.maxHoldSec);
+      to = Math.min(nowSec, launched + spec.entry.maxPoolAgeSec + spec.exit.maxHoldSec);
     }
     if (to <= from) continue;
     try {
@@ -167,7 +169,9 @@ export async function collectTrades(
         continue;
       }
       const candles = fillCandleGaps(raw, (tf === 'hour' ? 3600 : 60) * aggregate, to);
-      const r = simulateToken(spec, { mint: t.mint, pairCreatedAtSec: created, supply }, candles, { feePctPerSide: opts.feePctPerSide });
+      const r = simulateToken(spec, { mint: t.mint, pairCreatedAtSec: created, launchedAtSec: launched, supply }, candles, {
+        feePctPerSide: opts.feePctPerSide,
+      });
       if (!r) continue;
       if (opts.window && (r.entryTs < opts.window.from || r.entryTs >= opts.window.to)) continue;
       trades.push(r);
