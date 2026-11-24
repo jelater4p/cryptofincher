@@ -5,6 +5,8 @@ import { alertMessage, heliusAlert, heliusKeyId } from './data/heliusAlert.js';
 import { events } from './engine/state.js';
 import { currentJob, fullPipeline, runJob } from './jobs.js';
 import { kv } from './storage/repo.js';
+import { DISCOVERY_KEYS, lastDiscoveryCompleted } from './discovery/scheduleState.js';
+import { maybeSendDailySummary } from './summary.js';
 
 const log = childLogger('monitor');
 const TICK_MS = 10 * 60_000;
@@ -42,19 +44,8 @@ export async function checkHeliusAlert(now = Date.now(), probe: () => Promise<un
 /** Hata ile biten keşiften sonra yeniden denemeden önce beklenecek süre */
 export const DISCOVERY_RETRY_MS = 2 * 3600_000;
 
-const K = {
-  completed: 'discovery:lastCompleted',
-  attempt: 'discovery:lastAttempt',
-  running: 'discovery:running',
-  legacy: 'discovery:lastRun',
-};
-
-function lastCompleted(): number {
-  const v = kv.get<number | null>(K.completed, null);
-  if (v !== null) return v;
-  // eski sürüm sadece başlangıç zamanını tutuyordu: güncellemeden sonra gereksiz ikinci keşif çalışmasın
-  return kv.get<number>(K.legacy, 0);
-}
+const K = DISCOVERY_KEYS;
+const lastCompleted = lastDiscoveryCompleted;
 
 /**
  * Açılışta bir kez çağrılır: önceki süreç keşif sürerken kapandıysa (yeniden başlatma, çökme)
@@ -103,6 +94,7 @@ export function startMonitor() {
     try {
       await checkHeliusAlert();
       maybeRunDiscovery();
+      maybeSendDailySummary();
     } catch (err) {
       log.warn({ err: String(err) }, 'izleme hatası');
     }
