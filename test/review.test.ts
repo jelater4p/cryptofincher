@@ -17,7 +17,7 @@ import { seen, swaps, tokens, wallets } from '../src/storage/repo.js';
 import { strategies } from '../src/strategy/registry.js';
 import { evaluateEntry } from '../src/strategy/rules.js';
 import type { StrategySpec } from '../src/strategy/types.js';
-import { escapeHtml, formatWalletList, isStartCommand, resolveWalletRef } from '../src/telegram/bot.js';
+import { escapeHtml, formatWalletList, htmlToPlain, isStartCommand, resolveWalletRef } from '../src/telegram/bot.js';
 import { swap, swapTx, WALLET } from './helpers.js';
 
 let messages: string[] = [];
@@ -316,6 +316,30 @@ describe('Telegram cüzdan listesi', () => {
   it('birden fazla cüzdana uyan başlangıçta belirsiz der', () => {
     const two = [rep('Same1111111111111111111111111111111111111aa', 1), rep('Same1111111111111111111111111111111111111bb', 2)];
     expect(resolveWalletRef('Same1111', two)).toBe('ambiguous');
+  });
+
+  /**
+   * Telegram HTML kuralı: desteklenen etiketler dışında çıplak <, > ya da & olamaz; olursa mesajın
+   * tamamı reddedilir ve kullanıcıya hiç cevap gitmez.
+   */
+  const assertTelegramHtml = (html: string) => {
+    const withoutTags = html.replace(/<a href="[^"<>]*">|<\/a>|<\/?code>/g, '');
+    const withoutEntities = withoutTags.replace(/&(lt|gt|amp|quot);/g, '');
+    expect(withoutEntities).not.toMatch(/[<>&]/);
+  };
+
+  it('üretilen liste Telegram HTML kurallarına uyar', () => {
+    assertTelegramHtml(formatWalletList(reports));
+  });
+
+  it('kural kontrolü eski hatayı yakalar', () => {
+    expect(() => assertTelegramHtml('Detay: /cuzdan <adresin ilk harfleri>')).toThrow();
+  });
+
+  it('HTML reddedilirse düz metne çevrilebilir', () => {
+    expect(htmlToPlain('<code>Abc</code>\n<a href="https://solscan.io/account/Abc">Solscan</a> &lt;x&gt; &amp;')).toBe(
+      'Abc\nSolscan: https://solscan.io/account/Abc <x> &',
+    );
   });
 
   it('HTML özel karakterlerini kaçırır', () => {
