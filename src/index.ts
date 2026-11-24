@@ -6,6 +6,7 @@ import { TradingEngine } from './engine/engine.js';
 import { LiveExecutor, PaperExecutor, type Executor } from './engine/executor.js';
 import { engineState } from './engine/state.js';
 import { startMonitor } from './monitor.js';
+import { startUniverseRecorder } from './discovery/universe.js';
 import { getDb } from './storage/db.js';
 import { startTelegram } from './telegram/bot.js';
 import { loadKeystore, readPassphrase } from './wallet/keystore.js';
@@ -39,6 +40,8 @@ async function main() {
 
   // Helius limit uyarıları + hatırlatmalar ve zamanlanmış keşif
   startMonitor();
+  // tarafsız token evreni: yeni açılan havuzları performanslarına bakmadan kaydeder
+  startUniverseRecorder();
   if (config.DISCOVERY_INTERVAL_HOURS > 0) logger.info({ hours: config.DISCOVERY_INTERVAL_HOURS }, 'zamanlanmış keşif açık');
 
   const shutdown = () => {

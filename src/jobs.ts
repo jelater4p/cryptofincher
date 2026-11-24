@@ -6,6 +6,7 @@ import { solPriceService } from './data/solPrice.js';
 import { runDiscovery } from './discovery/discovery.js';
 import { events } from './engine/state.js';
 import { tokens, wallets } from './storage/repo.js';
+import { universe } from './discovery/universe.js';
 import { runExtraction } from './strategy/pipeline.js';
 import { strategies } from './strategy/registry.js';
 import { runWalkForward, walkforwards, type WalkForwardOptions, type WalkForwardReport } from './backtest/walkforward.js';
@@ -82,7 +83,7 @@ export async function walkForwardJob(target: string, opts: Partial<WalkForwardOp
   const spec = target === '*' ? '*' : strategies.get(target)?.spec;
   if (!spec) throw new Error(`Strateji yok: ${target}`);
   const histories = wallets.list().map((w) => ({ address: w.address, trips: loadAnalyzedTrips(w.address).trips }));
-  const report = await runWalkForward(spec, { wallets: histories, tokens: tokens.all() }, opts);
+  const report = await runWalkForward(spec, { wallets: histories, tokens: tokens.all(), unbiasedTokens: universe.all() }, opts);
   walkforwards.save(report);
   return report;
 }
