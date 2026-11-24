@@ -62,6 +62,22 @@ Zarar kesme: giriş fiyatının 0.62x seviyesinde (%38 zarar).
 
 Tüm parametreler Telegram'dan `/ayar` ile değiştirilebilir.
 
+## Tarafsız token evreni
+
+Normal backtest'te test edilen tokenlar trend listelerinden geliyor; yani çoğu sonradan yükselmiş "kazananlar". Ölen tokenlar evrende olmadığı için sonuçlar olduğundan iyi görünür (survivorship bias).
+
+Bunu önlemek için bot, GeckoTerminal'in yeni havuzlar listesinden tokenları **açıldıkları anda**, gelecekte ne olacakları bilinmeden kaydeder (varsayılan 5 dakikada bir, ücretsiz, Helius kredisi harcamaz). Ölenler de evrende kalır. Token sonradan başka bir DEX'e taşınsa bile ilk havuzu değişmez.
+
+- Backtest ve walk-forward, uygun **en az 20 tarafsız token** varsa sadece bunları kullanır. Yoksa eski evrenle birleştirir ve raporda "karışık" olarak belirtir.
+- Fiyat verisi bulunamayan tokenların oranı raporda gösterilir; bunlar çoğunlukla ölü tokenlar olduğu için yüksek oran sonuçların iyimser olabileceği anlamına gelir.
+- İşlem olmayan dakikalarda mum gelmediği için boşluklar bir önceki kapanış fiyatıyla doldurulur.
+
+Evrenin birikmesi zaman alır; ilk günlerde backtest'ler "karışık" evrenle çalışır.
+
+## Günlük özet
+
+Her gün `DAILY_SUMMARY_HOUR` saatinde (varsayılan 09:00, İstanbul saati) gruba tek bir mesaj gelir: son 24 saatin ve toplamın kâr/zararı, açık pozisyonlar, aktif stratejiler ve walk-forward sonuçları, keşif durumu, cüzdan sayıları, tarafsız evrenin büyümesi, Helius durumu ve kredi kullanımı. Bot o saatte kapalıysa aynı gün açılınca gönderir. İstediğin zaman `/ozet` ile de alabilirsin.
+
 ## Walk-forward doğrulama
 
 Normal backtest iyimserdir, çünkü strateji büyük ölçüde test edildiği dönemin verisinden çıkarılır. Walk-forward bunu önler: veri zamana göre bölünür, strateji her turda sadece **öğrenme** penceresinden yeniden çıkarılır ve hemen sonraki, hiç görmediği **test** penceresinde denenir.
@@ -142,7 +158,8 @@ CLI karşılıkları için `npm run cli` çalıştırın.
 
 ## Bilinen sınırlar
 
-- Backtest evreni DexScreener trend listelerinden ve analiz edilen cüzdanların tokenlarından oluşur. Bu yüzden hayatta kalan tokenlara doğru yanlılık var (survivorship bias): gerçek sonuçlar daha kötü olabilir.
+- Tarafsız evren yeterince birikene kadar backtest evreni trend listelerinden ve analiz edilen cüzdanların tokenlarından oluşur; bu dönemde hayatta kalan tokenlara doğru yanlılık var (survivorship bias). Rapor hangi evrenin kullanıldığını her zaman belirtir.
+- Cüzdanlar, aldıkları tokenlar sonradan yükseldiği için keşfediliyor; walk-forward bu seçimin etkisini tamamen ortadan kaldıramaz.
 - Mum verisinde likidite ve alım/satım sayısı yok, bu iki koşul backtest'te uygulanmaz.
 - Paper modda doldurulan fiyat gerçek Jupiter teklifidir, ama zincirdeki gerçek kayma ve işlemin bloğa girememe ihtimali modellenmez.
 
