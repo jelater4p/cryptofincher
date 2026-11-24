@@ -230,3 +230,6 @@ data/
 *.db-shm
 keystore*.json
 !keystore.example.json
+
+# dependencies
+node_modules/
