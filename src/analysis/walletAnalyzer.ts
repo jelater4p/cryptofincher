@@ -7,7 +7,7 @@ import { getDb } from '../storage/db.js';
 import { seen, swaps, tokens, transfers, tripContext, wallets } from '../storage/repo.js';
 import { annotateTrips, computeWalletMetrics, type AnalyzedTrip, type WalletMetrics } from './metrics.js';
 import { buildRoundTrips } from './positions.js';
-import { computeFlags, isEligible, skillScore, type WalletFlag } from './scoring.js';
+import { computeFlags, isEligible, skillScore, type FilterOptions, type WalletFlag } from './scoring.js';
 import { parseWalletTx } from './swapParser.js';
 import type { SwapEvent, TransferEvent } from '../core/types.js';
 
@@ -152,10 +152,19 @@ export function loadAnalyzedTrips(address: string): { trips: AnalyzedTrip[]; swa
   return { trips: analyzed, swapCount: sw.length };
 }
 
+/** Canlı analizde kullanılan eleme eşikleri (walk-forward da aynılarını kullanır) */
+export function productionFilters(): FilterOptions {
+  return {
+    minClosedTrips: config.ANALYSIS_MIN_CLOSED_POSITIONS,
+    minMedianSizeSol: config.ANALYSIS_MIN_MEDIAN_SIZE_SOL,
+    minPnlSol: config.ANALYSIS_MIN_PNL_SOL,
+  };
+}
+
 export function evaluateWallet(address: string): WalletReport {
   const { trips, swapCount } = loadAnalyzedTrips(address);
   const metrics = computeWalletMetrics(address, trips, swapCount);
-  const flags = computeFlags(metrics, { minClosedTrips: config.ANALYSIS_MIN_CLOSED_POSITIONS });
+  const flags = computeFlags(metrics, productionFilters());
   const score = skillScore(metrics, flags);
   const eligible = isEligible(flags);
   getDb()
@@ -205,4 +214,21 @@ export function storedReports(): Array<WalletReport & { address: string }> {
     score: r.skill_score,
     eligible: !!r.eligible,
   }));
+}
+
+/**
+ * Daha önce analiz edilmiş tüm cüzdanları güncel kurallarla yeniden değerlendirir.
+ * Sadece yerel veriyi kullanır (Helius kredisi harcamaz). Keşif cüzdanlarının durumu sonuca göre güncellenir;
+ * elle eklenenler hiçbir zaman otomatik dışlanmaz.
+ */
+export function reevaluateAll(): { total: number; eligibleBefore: number; eligibleAfter: number } {
+  const before = storedReports();
+  let eligibleAfter = 0;
+  for (const r of before) {
+    const rep = evaluateWallet(r.address);
+    if (rep.eligible) eligibleAfter++;
+    const w = wallets.get(r.address);
+    if (w?.source === 'discovered') wallets.setStatus(r.address, rep.eligible ? 'active' : 'excluded');
+  }
+  return { total: before.length, eligibleBefore: before.filter((r) => r.eligible).length, eligibleAfter };
 }

@@ -17,7 +17,7 @@ import { seen, swaps, tokens, wallets } from '../src/storage/repo.js';
 import { strategies } from '../src/strategy/registry.js';
 import { evaluateEntry } from '../src/strategy/rules.js';
 import type { StrategySpec } from '../src/strategy/types.js';
-import { escapeHtml, formatWalletList, htmlToPlain, isStartCommand, resolveWalletRef } from '../src/telegram/bot.js';
+import { escapeHtml, formatWalletList, htmlToPlain, isStartCommand, rankReports, resolveWalletRef } from '../src/telegram/bot.js';
 import { swap, swapTx, WALLET } from './helpers.js';
 
 let messages: string[] = [];
@@ -285,13 +285,13 @@ describe('cüzdan senkronu yarıda kalırsa', () => {
 });
 
 describe('Telegram cüzdan listesi', () => {
-  const rep = (address: string, score: number, eligible = true) =>
+  const rep = (address: string, score: number, eligible = true, flags: string[] = eligible ? [] : ['insufficient_data', 'low_profit', 'lucky_outlier']) =>
     ({
       address,
       score,
       eligible,
-      flags: [],
-      metrics: { winRate: 0.6, realizedPnlSol: 12.34, closedTrips: 30 },
+      flags,
+      metrics: { winRate: 0.6, realizedPnlSol: 0.123, closedTrips: 30, roi: 0.35, medianSizeSol: 0.05 },
     }) as unknown as Parameters<typeof resolveWalletRef>[1][number];
   const reports = [rep('AbcDEF1111111111111111111111111111111111111', 80), rep('AbcXYZ2222222222222222222222222222222222222', 60), rep('Qqq3333333333333333333333333333333333333333', 40, false)];
 
@@ -301,6 +301,27 @@ describe('Telegram cüzdan listesi', () => {
     expect(text).toContain('<code>AbcDEF1111111111111111111111111111111111111</code>');
     expect(text).toContain('3. ⛔ skor 40');
     expect(text).toContain('2/3 uygun');
+  });
+
+  it('PnL iki ondalık, ROI ve medyan pozisyonu gösterir; elenenlerde sadece eleme sebebini yazar', () => {
+    const text = formatWalletList(reports);
+    expect(text).toContain('PnL +0.12 SOL · ROI %35 · kazanma %60 · 30 işlem · medyan 0.05 SOL');
+    // 'tek şanslı işlem' eleme sebebi değil (uyarı), listede görünmez
+    expect(text).toContain('3. ⛔ skor 40 (az işlem, düşük kâr)');
+  });
+
+  it('önce uygun olanları sıralar; liste ve /cuzdan numaraları aynı sırayı kullanır', () => {
+    const mixed = [rep('Low1111111111111111111111111111111111111111', 90, false), rep('Hi11111111111111111111111111111111111111111', 50)];
+    const ranked = rankReports(mixed);
+    expect(ranked.map((r) => r.address[0])).toEqual(['H', 'L']);
+    expect(formatWalletList(ranked)).toMatch(/^1\. ✅ skor 50/m);
+    expect((resolveWalletRef('1', ranked) as { address: string }).address).toBe(mixed[1]!.address);
+  });
+
+  it('birden fazla kazanan tokende erken alıcı olanları işaretler', () => {
+    const text = formatWalletList(reports, new Map([[reports[0]!.address, 3], [reports[1]!.address, 1]]));
+    expect(text).toContain('1. ✅ skor 80 🏆3');
+    expect(text).not.toContain('🏆1');
   });
 
   it('sıra numarası, tam adres ve adres başlangıcıyla cüzdan bulur', () => {

@@ -160,6 +160,16 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE wallets ADD COLUMN history_max INTEGER;
   `,
+  // v5: cüzdanın hangi kazanan tokenların erken/aktif alıcıları arasında bulunduğu (çoklu kazanan sinyali)
+  `
+  CREATE TABLE IF NOT EXISTS wallet_sources (
+    wallet TEXT NOT NULL,
+    mint TEXT NOT NULL,
+    kind TEXT NOT NULL,           -- early | recent
+    found_at INTEGER NOT NULL,
+    PRIMARY KEY (wallet, mint)
+  );
+  `,
 ];
 
 export type DB = Database.Database;

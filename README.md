@@ -48,6 +48,12 @@ Alımlar ve satımlar **pozisyon turlarına** dönüştürülür, her cüzdan i�
 
 **Elenen cüzdanlar:** az veri, kârsız, yüksek frekanslı bot, blok-0 sniper (altyapı avantajı taklit edilemez), aynı slotta al-sat (wash/MEV), tokenları transferle gelen (insider/bundle şüphesi).
 
+**Toz ve düşük kâr:** Medyan pozisyonu 0,1 SOL'dan küçük (`ANALYSIS_MIN_MEDIAN_SIZE_SOL`) ya da toplam kârı 0,5 SOL'dan az (`ANALYSIS_MIN_PNL_SOL`) cüzdanlar da elenir; bu kadar küçük sonuçlar yetenekle şansı ayırt etmeye yetmez.
+
+**Skor (0-100)** mutlak kâra değil işlemin kalitesine bakar ama örneklem büyüklüğüne göre temkinlidir: kazanma oranı yerine onun istatistiksel alt sınırı (Wilson) kullanılır, kâr faktörü ve haftalık tutarlılık az veride 1'e/0'a doğru çekilir, işlem sayısı log ölçekte puanlanır. Böylece 10 işlemlik şanslı bir seri, 100 işlemlik tutarlı bir geçmişle aynı skoru alamaz. Puanlama kuralları değiştiğinde bot açılışta kayıtlı tüm cüzdanları kredi harcamadan yeniden değerlendirir (`/yenidendegerlendir` ile elle de yapılabilir).
+
+**Çoklu kazanan sinyali:** Bot her keşifte bulduğu cüzdanın hangi kazanan tokenden geldiğini kaydeder. Birden fazla kazanan tokende erken alıcı olan cüzdanlar (listede 🏆N) analiz sırasında öne alınır; tek bir şanslı işlemden fazlasını yapmış olma ihtimalleri yüksektir. Her keşifte `DISCOVERY_TOKENS_PER_RUN` (6) kazanan token taranır.
+
 Uygun cüzdanlar davranış özelliklerine göre **k-means** ile gruplanır (k silüet skoruyla otomatik seçilir). Her gruptan, beceri skoruyla ağırlıklandırılmış istatistiklerle bir **strateji** çıkar (örnek çıktı):
 
 ```

@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { childLogger } from '../core/logger.js';
 import { round } from '../core/stats.js';
 import { analyzeWallet, storedReports } from '../analysis/walletAnalyzer.js';
-import { FLAG_DESCRIPTIONS } from '../analysis/scoring.js';
+import { FLAG_DESCRIPTIONS, FLAG_SHORT, HARD_FLAGS } from '../analysis/scoring.js';
 import { MIN_UNBIASED, runBacktest } from '../backtest/runner.js';
 import { heliusCredits } from '../data/helius.js';
 import { heliusAlert } from '../data/heliusAlert.js';
@@ -11,10 +11,10 @@ import { discoverFromToken } from '../discovery/discovery.js';
 import type { TradingEngine } from '../engine/engine.js';
 import { positionsRepo } from '../engine/positionsRepo.js';
 import { engineState, events } from '../engine/state.js';
-import { currentJob, enrichEligible, fullPipeline, analyzePending, runJob, walkForwardJob } from '../jobs.js';
+import { currentJob, enrichEligible, fullPipeline, analyzePending, reevaluateAndExtract, runJob, walkForwardJob } from '../jobs.js';
 import { VERDICT_LABEL, formatWalkForward, walkforwards } from '../backtest/walkforward.js';
 import { getDb } from '../storage/db.js';
-import { kv, tokens, wallets } from '../storage/repo.js';
+import { kv, tokens, wallets, walletSources } from '../storage/repo.js';
 import { fmtDuration, fmtUsd } from '../strategy/describe.js';
 import { extractFromWallets, runExtraction } from '../strategy/pipeline.js';
 import { strategies } from '../strategy/registry.js';
@@ -42,6 +42,7 @@ const HELP = `CryptoFincher komutları
 /analiz [adres]: cüzdanı (ya da bekleyenleri) analiz et
 /zenginlestir: giriş öncesi fiyat hareketlerini ekle
 /cikar: stratejileri yeniden çıkar
+/yenidendegerlendir: tüm cüzdanları güncel kurallarla yeniden değerlendir (kredi harcamaz)
 /cuzdanstrateji <adres1,adres2>: belirli cüzdanlardan strateji
 
 📈 Strateji
@@ -101,14 +102,32 @@ export function resolveWalletRef(ref: string, reports: StoredReport[]): StoredRe
 }
 
 /** Skora göre sıralı cüzdan listesi; tam adres dokununca kopyalanır (HTML) */
-export function formatWalletList(reports: StoredReport[], max = 15): string {
-  const lines = reports.slice(0, max).map(
-    (r, i) =>
-      `${i + 1}. ${r.eligible ? '✅' : '⛔'} skor ${r.score.toFixed(0)} | kazanma %${Math.round(r.metrics.winRate * 100)} | PnL ${r.metrics.realizedPnlSol.toFixed(1)} SOL | ${r.metrics.closedTrips} işlem\n<code>${r.address}</code>`,
-  );
-  const eligible = reports.filter((r) => r.eligible).length;
+/** Liste ve /cuzdan numaraları için TEK sıralama: önce uygun olanlar, sonra skor */
+export function rankReports(reports: StoredReport[]): StoredReport[] {
+  return [...reports].sort((a, b) => Number(b.eligible) - Number(a.eligible) || b.score - a.score);
+}
+
+const signed = (x: number, d = 2) => `${x >= 0 ? '+' : ''}${x.toFixed(d)}`;
+
+/**
+ * Cüzdan listesi (sıralanmış raporlar beklenir: rankReports). Tam adres dokununca kopyalanır (HTML).
+ * 🏆N: cüzdan N farklı kazanan tokende erken alıcı.
+ */
+export function formatWalletList(ranked: StoredReport[], winnerCounts: Map<string, number> = new Map(), max = 15): string {
+  const lines = ranked.slice(0, max).map((r, i) => {
+    const m = r.metrics;
+    const wins = winnerCounts.get(r.address) ?? 0;
+    const why = r.eligible ? '' : ` (${r.flags.filter((f) => HARD_FLAGS.includes(f)).map((f) => FLAG_SHORT[f]).join(', ')})`;
+    return [
+      `${i + 1}. ${r.eligible ? '✅' : '⛔'} skor ${r.score.toFixed(0)}${wins >= 2 ? ` 🏆${wins}` : ''}${why}`,
+      `   PnL ${signed(m.realizedPnlSol ?? 0)} SOL · ROI %${Math.round((m.roi ?? 0) * 100)} · kazanma %${Math.round((m.winRate ?? 0) * 100)} · ${m.closedTrips ?? 0} işlem · medyan ${(m.medianSizeSol ?? 0).toFixed(2)} SOL`,
+      `<code>${r.address}</code>`,
+    ].join('\n');
+  });
+  const eligible = ranked.filter((r) => r.eligible).length;
   return [
-    `Cüzdanlar (skora göre, ${eligible}/${reports.length} uygun). Adrese dokununca kopyalanır.`,
+    `Cüzdanlar: ${eligible}/${ranked.length} uygun (önce uygunlar, sonra skor). Adrese dokununca kopyalanır.`,
+    '🏆N: N farklı kazanan tokende erken alıcı.',
     '',
     lines.join('\n\n'),
     '',
@@ -214,7 +233,10 @@ export function startTelegram(engine: TradingEngine) {
   });
 
   // ---------- Analiz ----------
-  bot.command('kesif', (ctx) => bg(ctx, 'uçtan uca keşif', () => fullPipeline({ discoverTokens: Number(arg(ctx)[0] ?? 3) })));
+  bot.command('kesif', (ctx) => {
+    const n = arg(ctx)[0];
+    return bg(ctx, 'uçtan uca keşif', () => fullPipeline({ discoverTokens: n ? Number(n) : undefined }));
+  });
 
   bot.command('kesiftoken', (ctx) => {
     const mint = arg(ctx)[0];
@@ -235,13 +257,13 @@ export function startTelegram(engine: TradingEngine) {
   bot.command('cuzdanlar', (ctx) => {
     const rows = storedReports();
     if (!rows.length) return ctx.reply('Henüz analiz edilmiş cüzdan yok. /kesif ya da /cuzdanekle');
-    return replyHtml(ctx, formatWalletList(rows));
+    return replyHtml(ctx, formatWalletList(rankReports(rows), walletSources.winnerCounts()));
   });
 
   bot.command('cuzdan', (ctx) => {
     const ref = arg(ctx)[0];
     if (!ref) return ctx.reply('Kullanım: /cuzdan <sıra no | adres | adresin ilk harfleri>\nÖrn: /cuzdan 1');
-    const found = resolveWalletRef(ref, storedReports());
+    const found = resolveWalletRef(ref, rankReports(storedReports()));
     if (found === 'ambiguous') return ctx.reply('Bu başlangıçla birden fazla cüzdan var; birkaç harf daha yaz.');
     if (!found) return ctx.reply('Rapor yok. Sıra numarası için /cuzdanlar, yeni cüzdan için /analiz <adres>');
     const r = found;
@@ -253,6 +275,8 @@ export function startTelegram(engine: TradingEngine) {
     ];
     const body = [
         `Skor: ${r.score} ${r.eligible ? '✅ uygun' : '⛔ uygun değil'}`,
+        `Erken alıcı olduğu kazanan token: ${walletSources.winnerCounts().get(addr) ?? 0}`,
+        `Kâr: ${signed(m.realizedPnlSol, 3)} SOL, ROI %${Math.round(m.roi * 100)}, medyan pozisyon ${m.medianSizeSol.toFixed(3)} SOL`,
         r.flags.length ? `Bayraklar: ${r.flags.map((f) => FLAG_DESCRIPTIONS[f]).join('; ')}` : 'Bayrak yok',
         '',
         `Performans: ${m.closedTrips} kapanmış işlem, kazanma %${Math.round(m.winRate * 100)}, PnL ${m.realizedPnlSol.toFixed(2)} SOL, ROI %${Math.round(m.roi * 100)}, PF ${m.profitFactor.toFixed(2)}`,
@@ -295,6 +319,12 @@ export function startTelegram(engine: TradingEngine) {
       events.emit('notify', `📈 ${n} işleme bağlam eklendi. Stratejileri güncellemek için /cikar`);
     }),
   );
+
+  bot.command('yenidendegerlendir', (ctx) => {
+    if (currentJob()) return ctx.reply(`⏳ Şu an çalışan iş: ${currentJob()}`);
+    reevaluateAndExtract('Elle yeniden değerlendirme');
+    return undefined;
+  });
 
   bot.command('cikar', (ctx) => {
     const r = runExtraction();

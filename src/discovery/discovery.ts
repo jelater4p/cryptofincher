@@ -5,7 +5,7 @@ import { dexscreener } from '../data/dexscreener.js';
 import { helius, HeliusLimitError } from '../data/helius.js';
 import { parseWalletTx } from '../analysis/swapParser.js';
 import { solPriceService } from '../data/solPrice.js';
-import { tokens, wallets } from '../storage/repo.js';
+import { tokens, wallets, walletSources } from '../storage/repo.js';
 
 const log = childLogger('discovery');
 
@@ -79,14 +79,16 @@ export async function discoverFromToken(mint: string, opts: { earlyBuyers?: numb
   };
   await scan(early, 'early', earlyCount);
   if (recent.length) await scan(recent, 'recent', opts.recent!);
-  for (const addr of found.keys()) {
+  for (const [addr, kind] of found) {
     if (!wallets.get(addr)) wallets.add(addr, 'discovered', { from: mint });
+    // zaten bilinen cüzdanlar için de kaydedilir: birden fazla kazananda görünmek güçlü bir sinyal
+    walletSources.record(addr, mint, kind);
   }
   log.info({ mint, symbol: info.symbol, found: found.size }, 'cüzdan keşfi');
   return [...found.keys()];
 }
 
-export async function runDiscovery(maxTokens = 3) {
+export async function runDiscovery(maxTokens = config.DISCOVERY_TOKENS_PER_RUN) {
   const winners = await findWinnerTokens(maxTokens);
   const all: string[] = [];
   for (const t of winners) {

@@ -40,6 +40,8 @@ export interface WalletMetrics {
   pnlConcentration: number;
   /** kârlı haftaların oranı (tutarlılık) */
   weeklyPositiveRate: number;
+  /** işlem kapanan hafta sayısı (tutarlılık ölçüsünün güvenilirliği için) */
+  activeWeeks: number;
   maxDrawdownSol: number;
 
   // --- davranış ---
@@ -214,6 +216,7 @@ export function computeWalletMetrics(address: string, trips: AnalyzedTrip[], swa
     bigWinRate: wins.length ? wins.filter((t) => t.roi >= 1).length / wins.length : 0,
     pnlConcentration: grossWin > 0 ? largestWin / grossWin : 1,
     weeklyPositiveRate: weeks.length ? weeks.filter((w) => w > 0).length / weeks.length : 0,
+    activeWeeks: weeks.length,
     maxDrawdownSol: maxDrawdown(closed.map((t) => t.realizedPnlSol)),
 
     medianHoldSec: nanSafe(median(holds)),

@@ -105,7 +105,13 @@ const schema = z.object({
   /** Her analiz turunda (keşif ya da /analiz) en fazla kaç cüzdan analiz edilsin */
   ANALYSIS_WALLETS_PER_RUN: num(60),
   ANALYSIS_MIN_CLOSED_POSITIONS: num(8),
+  /** Medyan pozisyonu bundan küçük cüzdanlar elenir (toz işlemciler: güvenilir örnek değil) */
+  ANALYSIS_MIN_MEDIAN_SIZE_SOL: num(0.1),
+  /** Toplam gerçekleşen kârı bundan az olan cüzdanlar elenir (SOL) */
+  ANALYSIS_MIN_PNL_SOL: num(0.5),
   DISCOVERY_EARLY_BUYERS_PER_TOKEN: num(60),
+  /** Her keşifte taranan kazanan token sayısı (çok olması, birden fazla kazananda görünen cüzdanları bulmayı kolaylaştırır) */
+  DISCOVERY_TOKENS_PER_RUN: num(6),
 
   LOG_LEVEL: z.string().default('info'),
 });

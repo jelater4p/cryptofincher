@@ -6,6 +6,7 @@ import { TradingEngine } from './engine/engine.js';
 import { LiveExecutor, PaperExecutor, type Executor } from './engine/executor.js';
 import { engineState } from './engine/state.js';
 import { startMonitor } from './monitor.js';
+import { reevaluateIfScoringChanged } from './jobs.js';
 import { startUniverseRecorder } from './discovery/universe.js';
 import { getDb } from './storage/db.js';
 import { startTelegram } from './telegram/bot.js';
@@ -37,6 +38,12 @@ async function main() {
   const engine = new TradingEngine({ paper: new PaperExecutor(), live });
   engine.start();
   startTelegram(engine);
+  // puanlama kuralları değiştiyse kayıtlı cüzdanları yeniden değerlendir (Telegram açıldıktan sonra: sonuç bildirilsin)
+  try {
+    reevaluateIfScoringChanged();
+  } catch (err) {
+    logger.error({ err: String(err) }, 'yeniden değerlendirme başarısız');
+  }
 
   // Helius limit uyarıları + hatırlatmalar ve zamanlanmış keşif
   startMonitor();
