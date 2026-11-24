@@ -33,25 +33,53 @@ export function prescreenSignatures(sigs: SignatureInfo[]): { ok: boolean; reaso
   return { ok: true, txPerDay };
 }
 
-/** Cüzdanın yeni işlemlerini çekip ayrıştırır ve kaydeder (artımlı). */
-export async function syncWallet(address: string, maxTx = config.ANALYSIS_MAX_TX_PER_WALLET) {
+/** Eski geçmişe inerken her bu kadar işlemde bir "yeterli veri toplandı mı" kontrol edilir */
+export const SYNC_CHECK_EVERY = 100;
+
+/** PnL'e dahil kapanmış tur sayısı (yerel veriden, kredi harcamaz) */
+export function closedTripCount(address: string): number {
+  return buildRoundTrips(swaps.byWallet(address), transfers.byWallet(address)).filter((t) => t.status === 'closed' && !t.excluded)
+    .length;
+}
+
+/**
+ * Cüzdanın işlemlerini çekip ayrıştırır ve kaydeder.
+ *
+ * - Her seferinde en yeniden itibaren `maxTx` imza listelenir (ucuz: 1000 imza tek çağrı) ve zaten işlenmiş
+ *   olanlar atlanır. Böylece hem yeni işlemler alınır hem de sınır büyüdüğünde eksik eski geçmiş tamamlanır.
+ * - Son analizden sonraki YENİ işlemler her zaman işlenir.
+ * - Daha ESKİ işlemlere inerken `targetClosed` kapanmış işleme ulaşılınca durulur: çok işlem yapan cüzdanlar
+ *   gereksiz yere derin taranmaz, az işlem yapanlar `maxTx`'e kadar taranır.
+ */
+export async function syncWallet(
+  address: string,
+  opts: { maxTx?: number; targetClosed?: number } = {},
+): Promise<{ fetched: number; stoppedEarly?: boolean; prescreenFailed?: string }> {
+  const maxTx = opts.maxTx ?? config.ANALYSIS_MAX_TX_PER_WALLET;
+  const targetClosed = opts.targetClosed ?? config.ANALYSIS_TARGET_CLOSED_TRIPS;
   const w = wallets.get(address);
-  const sigs = await helius.getAllSignatures(address, { until: w?.newest_signature ?? undefined, max: maxTx });
-  if (!w?.newest_signature) {
+  const sigs = await helius.getAllSignatures(address, { max: maxTx });
+  if (!w?.last_analyzed_at) {
     const pre = prescreenSignatures(sigs);
     if (!pre.ok) {
       log.info({ address, reason: pre.reason }, 'ön elemede elendi');
       return { fetched: 0, prescreenFailed: pre.reason };
     }
   }
-  const todo = sigs.filter((s) => !s.err && !seen.has(address, s.signature));
+  // listenin başındaki bu kadar imza son analizden sonra gelmiş (yeni); bulunamazsa hepsi yeni sayılır
+  const prevIdx = w?.newest_signature ? sigs.findIndex((s) => s.signature === w.newest_signature) : 0;
+  const newCount = prevIdx < 0 ? sigs.length : prevIdx;
+
   let fetched = 0;
+  let sinceCheck = 0;
+  let checked = false;
+  let stoppedEarly = false;
   const swapBuf: SwapEvent[] = [];
   const xferBuf: TransferEvent[] = [];
   const processed: string[] = [];
   /**
    * Yarıda hata olursa (kredi bitti, ağ hatası) o ana kadar çekilenler yine kaydedilir: kredi boşa gitmesin.
-   * Ama en yeni imza sadece tamamlanınca güncellenir; bir sonraki senkron kalanları alır, işlenmişleri atlar.
+   * İşlenmeyen imzalar "görüldü" sayılmaz; bir sonraki analizde kaldığı yerden devam edilir.
    */
   const flush = () => {
     swaps.insertMany(swapBuf.splice(0));
@@ -59,9 +87,25 @@ export async function syncWallet(address: string, maxTx = config.ANALYSIS_MAX_TX
     seen.addMany(address, processed.splice(0));
   };
   try {
-    for (const s of todo) {
+    for (let i = 0; i < sigs.length; i++) {
+      const s = sigs[i]!;
+      if (i >= newCount && (!checked || sinceCheck >= SYNC_CHECK_EVERY)) {
+        flush();
+        checked = true;
+        sinceCheck = 0;
+        if (closedTripCount(address) >= targetClosed) {
+          stoppedEarly = true;
+          break;
+        }
+      }
+      if (s.err) {
+        processed.push(s.signature); // başarısız işlem: ayrıştırılacak bir şey yok
+        continue;
+      }
+      if (seen.has(address, s.signature)) continue;
       const tx = await helius.getTransaction(s.signature);
       fetched++;
+      sinceCheck++;
       if (tx) {
         const r = parseWalletTx(tx, address, (ts) => solPriceService.at(ts));
         swapBuf.push(...r.swaps);
@@ -70,16 +114,14 @@ export async function syncWallet(address: string, maxTx = config.ANALYSIS_MAX_TX
       processed.push(s.signature);
       if (fetched % 50 === 0) {
         flush();
-        log.debug({ address, fetched, total: todo.length }, 'senkron');
+        log.debug({ address, fetched, total: sigs.length }, 'senkron');
       }
     }
   } finally {
     flush();
   }
-  // hatalı (err) işlemler de görüldü sayılır
-  seen.addMany(address, sigs.map((s) => s.signature));
-  wallets.markAnalyzed(address, sigs[0]?.signature ?? null);
-  return { fetched };
+  wallets.markAnalyzed(address, sigs[0]?.signature ?? null, maxTx);
+  return { fetched, stoppedEarly };
 }
 
 /** Eksik ya da eski token bilgilerini DexScreener'dan tamamlar */
@@ -129,8 +171,10 @@ export function evaluateWallet(address: string): WalletReport {
 export async function analyzeWallet(address: string): Promise<WalletReport | { prescreenFailed: string }> {
   wallets.add(address, wallets.get(address)?.source ?? 'manual');
   const sync = await syncWallet(address);
-  if ('prescreenFailed' in sync && sync.prescreenFailed) {
+  if (sync.prescreenFailed) {
     wallets.setStatus(address, 'excluded');
+    // analiz edildi olarak işaretle: aksi halde her turda yeniden sıraya girip kota harcıyordu
+    wallets.markAnalyzed(address, null, config.ANALYSIS_MAX_TX_PER_WALLET);
     return { prescreenFailed: sync.prescreenFailed };
   }
   const mints = [...new Set(swaps.byWallet(address).map((s) => s.mint))];

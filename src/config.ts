@@ -98,7 +98,12 @@ const schema = z.object({
   DAILY_SUMMARY_HOUR: num(9),
   SUMMARY_TIMEZONE: z.string().default('Europe/Istanbul'),
 
-  ANALYSIS_MAX_TX_PER_WALLET: num(400),
+  /** Cüzdan başına en fazla bakılacak işlem (geçmiş derinliği) */
+  ANALYSIS_MAX_TX_PER_WALLET: num(2000),
+  /** Bu kadar kapanmış işlem toplanınca daha eskiye gidilmez (az işlem yapan cüzdanlar derin taranır) */
+  ANALYSIS_TARGET_CLOSED_TRIPS: num(60),
+  /** Her analiz turunda (keşif ya da /analiz) en fazla kaç cüzdan analiz edilsin */
+  ANALYSIS_WALLETS_PER_RUN: num(60),
   ANALYSIS_MIN_CLOSED_POSITIONS: num(8),
   DISCOVERY_EARLY_BUYERS_PER_TOKEN: num(60),
 

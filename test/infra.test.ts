@@ -79,7 +79,7 @@ describe('altyapı', () => {
 
   it('Helius kredi bütçesi: analiz %95 sınırında durur, işlemler devam eder', () => {
     const month = `helius_credits:${new Date().toISOString().slice(0, 7)}:${heliusKeyId()}`;
-    kv.set(month, heliusCredits.analysisAllowance() - 5);
+    kv.set(month, heliusCredits.analysisAllowance()); // analiz sınırında: bir çağrı daha aşar
     expect(() => heliusCredits.charge('getTransaction', 'analysis')).toThrow(CreditBudgetExceeded);
     expect(() => heliusCredits.charge('getTransaction', 'trading')).not.toThrow();
   });

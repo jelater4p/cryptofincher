@@ -156,6 +156,10 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX IF NOT EXISTS idx_universe_created ON universe(created_at);
   `,
+  // v4: cüzdanın hangi geçmiş derinliğiyle analiz edildiği (sınır artınca eksik geçmiş tamamlanır)
+  `
+  ALTER TABLE wallets ADD COLUMN history_max INTEGER;
+  `,
 ];
 
 export type DB = Database.Database;

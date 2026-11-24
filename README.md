@@ -169,7 +169,14 @@ CLI karşılıkları için `npm run cli` çalıştırın.
 - `getTransactionsForAddress` Free planda yok. Bot, her planda çalışan `getSignaturesForAddress` + `getTransaction` ile çalışır.
 - Bot cüzdanlar, işlem çekilmeden önce sadece imza listesine bakılarak elenir. Bu kredinin büyük kısmını korur.
 - Tüm veriler yerel SQLite'ta önbelleklenir, aynı işlem iki kez çekilmez.
-- Kaba hesap (varsayılan temkinli maliyetlerle): cüzdan başına ~2.500 kredi, yani ayda ~350 cüzdan. Gerçek kredi maliyetlerini Helius panelinden kontrol edip `.env`'de `HELIUS_CREDIT_*` değerlerini güncelleyin.
+- Panelde gözlenen maliyet çağrı başına yaklaşık 1 kredi (`HELIUS_CREDIT_*`). Fiyatlandırma değişirse `.env`'den güncelleyin.
+
+## Cüzdan geçmişi ve analiz sırası
+
+- Cüzdan başına en fazla `ANALYSIS_MAX_TX_PER_WALLET` (2000) işleme bakılır. Eski geçmişe inerken `ANALYSIS_TARGET_CLOSED_TRIPS` (60) kapanmış işlem toplanınca durulur: çok işlem yapan cüzdanlar gereksiz derin taranmaz, az işlem yapanlar sınıra kadar taranır.
+- Tekrar analizde zaten işlenmiş işlemler atlanır. Son analizden sonraki yeni işlemler her zaman alınır; sınır büyütülürse eksik eski geçmiş tamamlanır.
+- Her turda en fazla `ANALYSIS_WALLETS_PER_RUN` (60) cüzdan analiz edilir. Sıra: elle eklenenler, hiç analiz edilmemiş keşif cüzdanları (en eski eklenen önce), 3 günden eski uygun cüzdanların yenilenmesi, son olarak sadece "yeterli veri yok" yüzünden ve daha sığ geçmişle elenmiş cüzdanlar. Yeterli veriyle kârsız çıkan cüzdanlara tekrar bakılmaz.
+- Asıl sınır kredi değil hız: Free planda saniyede ~8 istek. 2000 işlemlik bir cüzdan birkaç dakika sürer; plan yükseltilirse `HELIUS_RPS` artırılabilir.
 
 ## Bilinen sınırlar
 
