@@ -17,7 +17,7 @@ import { seen, swaps, tokens, wallets } from '../src/storage/repo.js';
 import { strategies } from '../src/strategy/registry.js';
 import { evaluateEntry } from '../src/strategy/rules.js';
 import type { StrategySpec } from '../src/strategy/types.js';
-import { isStartCommand } from '../src/telegram/bot.js';
+import { escapeHtml, formatWalletList, isStartCommand, resolveWalletRef } from '../src/telegram/bot.js';
 import { swap, swapTx, WALLET } from './helpers.js';
 
 let messages: string[] = [];
@@ -281,6 +281,45 @@ describe('cüzdan senkronu yarıda kalırsa', () => {
     expect(seen.has(WALLET, 'sig-0')).toBe(true);
     expect(seen.has(WALLET, 'sig-2')).toBe(false); // hata veren tekrar denenecek
     expect(wallets.get(WALLET)!.newest_signature).toBeNull();
+  });
+});
+
+describe('Telegram cüzdan listesi', () => {
+  const rep = (address: string, score: number, eligible = true) =>
+    ({
+      address,
+      score,
+      eligible,
+      flags: [],
+      metrics: { winRate: 0.6, realizedPnlSol: 12.34, closedTrips: 30 },
+    }) as unknown as Parameters<typeof resolveWalletRef>[1][number];
+  const reports = [rep('AbcDEF1111111111111111111111111111111111111', 80), rep('AbcXYZ2222222222222222222222222222222222222', 60), rep('Qqq3333333333333333333333333333333333333333', 40, false)];
+
+  it('tam adresi kopyalanabilir biçimde ve sıra numarasıyla gösterir', () => {
+    const text = formatWalletList(reports);
+    expect(text).toContain('1. ✅ skor 80');
+    expect(text).toContain('<code>AbcDEF1111111111111111111111111111111111111</code>');
+    expect(text).toContain('3. ⛔ skor 40');
+    expect(text).toContain('2/3 uygun');
+  });
+
+  it('sıra numarası, tam adres ve adres başlangıcıyla cüzdan bulur', () => {
+    expect((resolveWalletRef('1', reports) as { address: string }).address).toBe(reports[0]!.address);
+    expect((resolveWalletRef('3', reports) as { address: string }).address).toBe(reports[2]!.address);
+    expect(resolveWalletRef('9', reports)).toBeUndefined();
+    expect((resolveWalletRef(reports[1]!.address, reports) as { address: string }).address).toBe(reports[1]!.address);
+    expect((resolveWalletRef('AbcX', reports) as { address: string }).address).toBe(reports[1]!.address);
+    expect(resolveWalletRef('Abc', reports)).toBeUndefined(); // 4 harften kısa
+    expect(resolveWalletRef('AbcD', reports)).not.toBe('ambiguous');
+  });
+
+  it('birden fazla cüzdana uyan başlangıçta belirsiz der', () => {
+    const two = [rep('Same1111111111111111111111111111111111111aa', 1), rep('Same1111111111111111111111111111111111111bb', 2)];
+    expect(resolveWalletRef('Same1111', two)).toBe('ambiguous');
+  });
+
+  it('HTML özel karakterlerini kaçırır', () => {
+    expect(escapeHtml('a < b & c > d')).toBe('a &lt; b &amp; c &gt; d');
   });
 });
 
