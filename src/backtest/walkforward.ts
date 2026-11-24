@@ -1,3 +1,4 @@
+import { config } from '../config.js';
 import { childLogger } from '../core/logger.js';
 import { median, round, stdev, mean } from '../core/stats.js';
 import type { TokenInfo } from '../core/types.js';
@@ -33,6 +34,9 @@ export interface WalkForwardOptions {
   mode: 'rolling' | 'expanding';
   /** öğrenme penceresinde cüzdan başına gereken en az kapanmış işlem */
   minTrainTrips: number;
+  /** canlı analizle aynı toz/düşük kâr eşikleri (öğrenme penceresinde uygulanır) */
+  minMedianSizeSol: number;
+  minPnlSol: number;
   /** bir turun geçerli sayılması için test penceresinde gereken en az işlem */
   minTradesPerFold: number;
   /** pencere başına backtest edilecek en fazla token (GeckoTerminal limiti için) */
@@ -45,6 +49,8 @@ export const DEFAULT_WF_OPTIONS: WalkForwardOptions = {
   testDays: 7,
   mode: 'rolling',
   minTrainTrips: 5,
+  minMedianSizeSol: config.ANALYSIS_MIN_MEDIAN_SIZE_SOL,
+  minPnlSol: config.ANALYSIS_MIN_PNL_SOL,
   minTradesPerFold: 3,
   maxTokensPerWindow: 25,
 };
@@ -184,14 +190,19 @@ export interface EvaluatedWallet extends WalletInput {
 }
 
 /** Cüzdanları sadece verilen penceredeki işlemlerine göre yeniden değerlendirir */
-export function evaluateWalletsInWindow(histories: WalletHistory[], w: TimeWindow, minTrips: number): EvaluatedWallet[] {
+export function evaluateWalletsInWindow(
+  histories: WalletHistory[],
+  w: TimeWindow,
+  minTrips: number,
+  thresholds: Pick<WalkForwardOptions, 'minMedianSizeSol' | 'minPnlSol'> = { minMedianSizeSol: 0, minPnlSol: 0 },
+): EvaluatedWallet[] {
   const out: EvaluatedWallet[] = [];
   for (const h of histories) {
     const trips = tripsInWindow(h.trips, w);
     if (!trips.length) continue;
     const swapCount = trips.reduce((s, t) => s + t.buys.length + t.sells.length, 0);
     const metrics = computeWalletMetrics(h.address, trips, swapCount);
-    const flags = computeFlags(metrics, { minClosedTrips: minTrips });
+    const flags = computeFlags(metrics, { minClosedTrips: minTrips, ...thresholds });
     out.push({ address: h.address, trips, metrics, score: skillScore(metrics, flags), eligible: isEligible(flags) });
   }
   return out;
@@ -316,7 +327,7 @@ export async function runWalkForward(
   const testCoverage: CoverageStats = { attempted: 0, noCandles: 0, noSupply: 0 };
 
   for (const w of windows) {
-    const trainEval = evaluateWalletsInWindow(histories, w.train, o.minTrainTrips);
+    const trainEval = evaluateWalletsInWindow(histories, w.train, o.minTrainTrips, o);
     const testEval = evaluateWalletsInWindow(histories, w.test, 1);
     // strateji modunda sadece kaynak cüzdanlar; ama o dönemde uygun değillerse o dönemde seçilmezlerdi
     const pool = sourceWallets ? trainEval.filter((x) => sourceWallets.has(x.address)) : trainEval;

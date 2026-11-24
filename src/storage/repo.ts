@@ -231,3 +231,31 @@ export const tripContext = {
       .run(wallet, mint, openedAt, JSON.stringify(ctx));
   },
 };
+
+// ---------------- Cüzdan kaynakları (çoklu kazanan sinyali) ----------------
+export const walletSources = {
+  /** Cüzdanın bir kazanan tokende bulunduğunu kaydeder; 'early' kaydı 'recent'in üzerine yazılır */
+  record(wallet: string, mint: string, kind: 'early' | 'recent', at = Date.now()) {
+    getDb()
+      .prepare(
+        `INSERT INTO wallet_sources(wallet, mint, kind, found_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(wallet, mint) DO UPDATE SET kind = CASE WHEN excluded.kind = 'early' THEN 'early' ELSE wallet_sources.kind END`,
+      )
+      .run(wallet, mint, kind, at);
+  },
+  /**
+   * Cüzdan → erken alıcı olduğu farklı kazanan token sayısı. Bu tablodan önceki sürümlerde sadece
+   * ilk bulunduğu token (wallets.discovered_from) saklanıyordu; o da sayıma dahil edilir.
+   */
+  winnerCounts(): Map<string, number> {
+    const rows = getDb()
+      .prepare(
+        `SELECT wallet, COUNT(DISTINCT mint) AS n FROM (
+           SELECT wallet, mint FROM wallet_sources WHERE kind = 'early'
+           UNION SELECT address AS wallet, discovered_from AS mint FROM wallets WHERE discovered_from IS NOT NULL
+         ) GROUP BY wallet`,
+      )
+      .all() as Array<{ wallet: string; n: number }>;
+    return new Map(rows.map((r) => [r.wallet, r.n]));
+  },
+};

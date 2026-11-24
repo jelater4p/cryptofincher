@@ -96,7 +96,7 @@ describe('karar ve kararlılık', () => {
 
 // ------------------------------------------------------------------ uçtan uca senaryo
 
-/** Her 8 saatte bir işlem: 2x'te yarısı, 4x'te kalanı; her 3 işlemden biri 0.65x'te zarar kesme */
+/** Her 8 saatte bir ~1 SOL'luk işlem: 2x'te yarısı, 4x'te kalanı; her 3 işlemden biri 0.65x'te zarar kesme */
 function walletHistory(address: string, kind: 'skilled' | 'loser'): WalletHistory {
   const sw = [];
   const created = new Map<string, number>();
@@ -105,12 +105,12 @@ function walletHistory(address: string, kind: 'skilled' | 'loser'): WalletHistor
     const mint = `${address}${i}`.padEnd(40, 'x') + 'pump';
     const price = (0.8 + (i % 8) * 0.1) * 1e-6; // $80K-$150K mcap (arz 1e9, SOL $100)
     created.set(mint, t - (300 + (i % 7) * 100)); // havuz açılışından 5-15 dk sonra giriş
-    sw.push(swap({ wallet: address, side: 'BUY', sol: price * 1000, tokens: 1000, t, mint }));
+    sw.push(swap({ wallet: address, side: 'BUY', sol: price * 1e6, tokens: 1e6, t, mint }));
     if (kind === 'loser' || i % 3 === 0) {
-      sw.push(swap({ wallet: address, side: 'SELL', sol: price * 1000 * (kind === 'loser' ? 0.5 : 0.65), tokens: 1000, t: t + 1800, mint }));
+      sw.push(swap({ wallet: address, side: 'SELL', sol: price * 1e6 * (kind === 'loser' ? 0.5 : 0.65), tokens: 1e6, t: t + 1800, mint }));
     } else {
-      sw.push(swap({ wallet: address, side: 'SELL', sol: price * 2 * 500, tokens: 500, t: t + 900, mint }));
-      sw.push(swap({ wallet: address, side: 'SELL', sol: price * 4 * 500, tokens: 500, t: t + 1800, mint }));
+      sw.push(swap({ wallet: address, side: 'SELL', sol: price * 2 * 5e5, tokens: 5e5, t: t + 900, mint }));
+      sw.push(swap({ wallet: address, side: 'SELL', sol: price * 4 * 5e5, tokens: 5e5, t: t + 1800, mint }));
     }
   }
   const trips = annotateTrips(

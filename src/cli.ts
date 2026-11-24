@@ -7,7 +7,7 @@ import { heliusCredits } from './data/helius.js';
 import { solPriceService } from './data/solPrice.js';
 import { discoverFromToken, runDiscovery } from './discovery/discovery.js';
 import { events } from './engine/state.js';
-import { analyzePending, enrichEligible, fullPipeline, walkForwardJob } from './jobs.js';
+import { analyzePending, enrichEligible, fullPipeline, reevaluateAndExtract, walkForwardJob } from './jobs.js';
 import { formatWalkForward } from './backtest/walkforward.js';
 import { getDb } from './storage/db.js';
 import { wallets } from './storage/repo.js';
@@ -42,7 +42,7 @@ const commands: Record<string, { help: string; run: () => Promise<unknown> | unk
       ),
   },
   'wallets:remove': { help: '<adres>', run: () => wallets.remove(args[0]!) },
-  discover: { help: '[tokenSayısı]  trend tokenlardan cüzdan keşfi', run: async () => console.log(await runDiscovery(Number(args[0] ?? 3))) },
+  discover: { help: '[tokenSayısı]  trend tokenlardan cüzdan keşfi', run: async () => console.log(await runDiscovery(args[0] ? Number(args[0]) : undefined)) },
   'discover:token': { help: '<mint>  bir tokenın erken alıcıları', run: async () => console.log(await discoverFromToken(args[0]!, { recent: 100 })) },
   analyze: {
     help: '[adres]  cüzdanı ya da bekleyenleri analiz et',
@@ -59,6 +59,7 @@ const commands: Record<string, { help: string; run: () => Promise<unknown> | unk
       }
     },
   },
+  reevaluate: { help: 'tüm cüzdanları güncel kurallarla yeniden değerlendir (kredi harcamaz)', run: () => console.log(reevaluateAndExtract('Elle yeniden değerlendirme')) },
   pipeline: { help: 'keşif → analiz → zenginleştirme → strateji', run: () => fullPipeline() },
   'strategies:list': {
     help: 'stratejiler',

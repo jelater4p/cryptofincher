@@ -1,11 +1,12 @@
 import { childLogger } from './core/logger.js';
 import { enrichTrips } from './analysis/enrich.js';
-import { analyzeWallet, loadAnalyzedTrips, storedReports } from './analysis/walletAnalyzer.js';
+import { analyzeWallet, loadAnalyzedTrips, reevaluateAll, storedReports } from './analysis/walletAnalyzer.js';
+import { SCORING_VERSION } from './analysis/scoring.js';
 import { HeliusLimitError, heliusCredits } from './data/helius.js';
 import { solPriceService } from './data/solPrice.js';
 import { runDiscovery } from './discovery/discovery.js';
 import { events } from './engine/state.js';
-import { tokens, wallets, type WalletRow } from './storage/repo.js';
+import { kv, tokens, wallets, walletSources, type WalletRow } from './storage/repo.js';
 import { config } from './config.js';
 import { universe } from './discovery/universe.js';
 import { runExtraction } from './strategy/pipeline.js';
@@ -42,6 +43,7 @@ export const REFRESH_AFTER_MS = 3 * 86400_000;
 
 /**
  * Analiz sırası (saf fonksiyon). Öncelik:
+ * Her grupta birden fazla kazanan tokende erken alıcı olan cüzdanlar öne alınır.
  * 1. elle eklenen cüzdanlar (hiç analiz edilmemiş ya da 3 günden eski)
  * 2. hiç analiz edilmemiş keşif cüzdanları, en eski eklenen önce (kuyruk adil erir)
  * 3. uygun (aktif) cüzdanların yenilenmesi (3 günden eski; sadece yeni işlemler çekilir, ucuz)
@@ -51,10 +53,12 @@ export const REFRESH_AFTER_MS = 3 * 86400_000;
 export function selectWalletsToAnalyze(
   rows: WalletRow[],
   flagsByAddress: Map<string, string[]>,
-  opts: { now: number; maxTx: number; limit: number; staleMs?: number },
+  opts: { now: number; maxTx: number; limit: number; staleMs?: number; winnerCounts?: Map<string, number> },
 ): WalletRow[] {
   const staleMs = opts.staleMs ?? REFRESH_AFTER_MS;
-  const byAdded = [...rows].sort((a, b) => a.added_at - b.added_at);
+  const wins = (w: WalletRow) => opts.winnerCounts?.get(w.address) ?? 0;
+  // birden fazla kazanan tokende erken alıcı olanlar önce; eşitlikte en eski eklenen
+  const byAdded = [...rows].sort((a, b) => wins(b) - wins(a) || a.added_at - b.added_at);
   const isStale = (w: WalletRow) => !w.last_analyzed_at || opts.now - w.last_analyzed_at > staleMs;
   const groups = [
     byAdded.filter((w) => w.source === 'manual' && isStale(w)),
@@ -84,7 +88,12 @@ export function selectWalletsToAnalyze(
 /** Sıradaki cüzdanları analiz eder */
 export async function analyzePending(limit = config.ANALYSIS_WALLETS_PER_RUN) {
   const flags = new Map(storedReports().map((r) => [r.address, r.flags as string[]]));
-  const todo = selectWalletsToAnalyze(wallets.list(), flags, { now: Date.now(), maxTx: config.ANALYSIS_MAX_TX_PER_WALLET, limit });
+  const todo = selectWalletsToAnalyze(wallets.list(), flags, {
+    now: Date.now(),
+    maxTx: config.ANALYSIS_MAX_TX_PER_WALLET,
+    limit,
+    winnerCounts: walletSources.winnerCounts(),
+  });
   let eligible = 0;
   for (const w of todo) {
     try {
@@ -109,7 +118,7 @@ export async function enrichEligible(perWallet = 15) {
 /** Uçtan uca: keşif → analiz → zenginleştirme → strateji çıkarımı */
 export async function fullPipeline(opts: { discoverTokens?: number; analyzeLimit?: number } = {}) {
   await solPriceService.syncHistory();
-  const d = await runDiscovery(opts.discoverTokens ?? 3);
+  const d = await runDiscovery(opts.discoverTokens);
   events.emit('notify', `🔎 Keşif: ${d.tokens.length} kazanan token, ${d.wallets.length} aday cüzdan`);
   const a = await analyzePending(opts.analyzeLimit);
   events.emit('notify', `🧪 Analiz: ${a.analyzed} cüzdan, ${a.eligible} uygun. Kredi: ${heliusCredits.used().toLocaleString()}/${heliusCredits.limit().toLocaleString()}`);
@@ -127,4 +136,25 @@ export async function walkForwardJob(target: string, opts: Partial<WalkForwardOp
   const report = await runWalkForward(spec, { wallets: histories, tokens: tokens.all(), unbiasedTokens: universe.all() }, opts);
   walkforwards.save(report);
   return report;
+}
+
+/** Tüm cüzdanları yeniden değerlendirip stratejileri yeniden çıkarır (kredi harcamaz) ve sonucu bildirir */
+export function reevaluateAndExtract(reason: string) {
+  const r = reevaluateAll();
+  const x = runExtraction();
+  events.emit(
+    'notify',
+    `🔄 ${reason}: ${r.total} cüzdan yeniden değerlendirildi. Uygun cüzdan: ${r.eligibleBefore} → ${r.eligibleAfter}. ` +
+      `${x.specs.length} strateji çıkarıldı. /cuzdanlar · /stratejiler`,
+  );
+  return { ...r, strategies: x.specs.length };
+}
+
+/** Puanlama kuralları değiştiyse (yeni sürüm) açılışta bir kez çalışır */
+export function reevaluateIfScoringChanged(): boolean {
+  const current = kv.get<number>('scoring:version', 1);
+  if (current >= SCORING_VERSION) return false;
+  reevaluateAndExtract('Puanlama kuralları güncellendi');
+  kv.set('scoring:version', SCORING_VERSION);
+  return true;
 }
