@@ -25,5 +25,12 @@ export const DEX_PROGRAMS: Record<string, string> = {
 
 export const PUMPFUN_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 
+/**
+ * pump.fun token basma yetkilisi (yaygın kullanılan adres; resmi kaynaktan doğrulanamadı).
+ * Sadece yeni token oluşturma işlemlerinde geçtiği için akışı çok hafifletir. Yanlışsa akış
+ * 10 dakika içinde hiç token göremez ve otomatik olarak programın tamamını dinlemeye geçer.
+ */
+export const PUMPFUN_MINT_AUTHORITY = 'TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM';
+
 /** pump.fun tokenlarının toplam arzı (6 ondalık, 1 milyar) */
 export const PUMPFUN_TOTAL_SUPPLY = 1_000_000_000;

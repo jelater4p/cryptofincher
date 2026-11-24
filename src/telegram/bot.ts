@@ -19,6 +19,7 @@ import { fmtDuration, fmtUsd } from '../strategy/describe.js';
 import { extractFromWallets, runExtraction } from '../strategy/pipeline.js';
 import { strategies } from '../strategy/registry.js';
 import { buildDailySummary, collectSummaryData } from '../summary.js';
+import { pumpfunStreamStats } from '../data/pumpfunStream.js';
 
 const log = childLogger('telegram');
 const SOLANA_ADDR = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -111,6 +112,12 @@ export function startTelegram(engine: TradingEngine) {
           return a ? `Helius: ⛔ ${a.kind === 'budget' ? 'bütçe doldu' : a.kind === 'quota' ? 'kredi/limit bitti' : 'anahtar geçersiz'} (${a.detail})` : 'Helius: ✅ normal';
         })(),
         `Otomatik keşif: ${config.DISCOVERY_INTERVAL_HOURS > 0 ? `${config.DISCOVERY_INTERVAL_HOURS} saatte bir` : 'kapalı'}`,
+        `Taranan aday token: ${engine.candidateCount()}${strategies.active().length ? ` (${config.SCAN_INTERVAL_SEC} sn'de bir)` : ' (aktif strateji olunca taranır)'}`,
+        (() => {
+          const p = pumpfunStreamStats();
+          if (!p.enabled) return 'pump.fun akışı: kapalı';
+          return `pump.fun akışı: ${p.connected ? '✅ bağlı' : '⏳ bağlanıyor'} (${p.mode === 'light' ? 'hafif mod' : 'tam mod'}), son 10 dk'da ${p.createsLast10m} yeni token`;
+        })(),
         `Cüzdan: ${wallets.list('active').length} aktif / ${wallets.list().length} toplam`,
         `Arka plan işi: ${currentJob() ?? 'yok'}`,
       ].join('\n'),

@@ -62,11 +62,26 @@ Zarar kesme: giriş fiyatının 0.62x seviyesinde (%38 zarar).
 
 Tüm parametreler Telegram'dan `/ayar` ile değiştirilebilir.
 
+## Piyasa taraması
+
+Bot iki ayrı iş yapar: **öğrenme** (cüzdan keşfi, analiz, strateji çıkarımı; varsayılan 24 saatte bir) ve **işlem** (piyasayı tarayıp strateji kurallarına uyan tokenlara girmek). İşlem tarafı sürekli çalışır:
+
+| | Sıklık |
+|---|---|
+| Aday tokenları strateji kurallarına göre kontrol | 20 saniyede bir (`SCAN_INTERVAL_SEC`) |
+| Açık pozisyonların kâr alma / zarar kesme kontrolü | 5 saniyede bir |
+| GeckoTerminal yeni havuzlar listesi | 2 dakikada bir (`UNIVERSE_RECORDER_MINUTES`) |
+| pump.fun yeni tokenları (Helius WebSocket) | Saniyeler içinde (`PUMPFUN_STREAM`) |
+
+Aday tokenlar dört kaynaktan gelir: pump.fun canlı akışı, GeckoTerminal yeni havuzlar listesi, DexScreener profil/boost listeleri ve `/izle` ile eklenen tokenlar. Aday listesi en fazla `SCAN_MAX_CANDIDATES` (900) token tutar; en eskiler önce çıkar. Tarama sadece aktif bir strateji varken alım kontrolü yapar.
+
+**pump.fun akışı** önce hafif modda çalışır: sadece pump.fun'ın token basma yetkilisinin geçtiği işlemleri, yani neredeyse yalnızca yeni token oluşturmaları dinler. Bu adres resmi bir kaynaktan doğrulanamadı; hafif mod 10 dakika içinde hiç token göremezse bot otomatik olarak pump.fun programının tüm işlemlerini dinleyen tam moda geçer ve gruba bildirir. Tam mod çok daha yüksek bant genişliği kullanır. Akışın durumu `/durum` ve günlük özette görünür. Helius WebSocket kullanımının kredi tüketip tüketmediğini ilk günlerde Helius panelinden kontrol et.
+
 ## Tarafsız token evreni
 
 Normal backtest'te test edilen tokenlar trend listelerinden geliyor; yani çoğu sonradan yükselmiş "kazananlar". Ölen tokenlar evrende olmadığı için sonuçlar olduğundan iyi görünür (survivorship bias).
 
-Bunu önlemek için bot, GeckoTerminal'in yeni havuzlar listesinden tokenları **açıldıkları anda**, gelecekte ne olacakları bilinmeden kaydeder (varsayılan 5 dakikada bir, ücretsiz, Helius kredisi harcamaz). Ölenler de evrende kalır. Token sonradan başka bir DEX'e taşınsa bile ilk havuzu değişmez.
+Bunu önlemek için bot, GeckoTerminal'in yeni havuzlar listesinden tokenları **açıldıkları anda**, gelecekte ne olacakları bilinmeden kaydeder (varsayılan 2 dakikada bir, ücretsiz, Helius kredisi harcamaz; aynı tokenlar işlem taramasına da aday olarak verilir). Ölenler de evrende kalır. Token sonradan başka bir DEX'e taşınsa bile ilk havuzu değişmez.
 
 - Backtest ve walk-forward, uygun **en az 20 tarafsız token** varsa sadece bunları kullanır. Yoksa eski evrenle birleştirir ve raporda "karışık" olarak belirtir.
 - Fiyat verisi bulunamayan tokenların oranı raporda gösterilir; bunlar çoğunlukla ölü tokenlar olduğu için yüksek oran sonuçların iyimser olabileceği anlamına gelir.

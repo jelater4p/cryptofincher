@@ -1,10 +1,12 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
-const bool = z
-  .string()
-  .optional()
-  .transform((v) => v === 'true' || v === '1');
+/** Belirtilmemişse varsayılan değer; belirtilmişse sadece 'true'/'1' açık sayılır */
+const boolDefault = (def: boolean) =>
+  z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v === '' ? def : v === 'true' || v === '1'));
 
 const num = (def: number) =>
   z
@@ -76,7 +78,10 @@ const schema = z.object({
   SAFETY_MAX_TOP10_PCT: num(60),
   SCAN_INTERVAL_SEC: num(20),
   POSITION_CHECK_INTERVAL_SEC: num(5),
-  PUMPFUN_STREAM: bool,
+  /** Yeni pump.fun tokenlarını Helius WebSocket ile saniyeler içinde gör (hafif mod, gerekirse tam mod) */
+  PUMPFUN_STREAM: boolDefault(true),
+  /** Taramada izlenen en fazla aday token (her biri 20 sn'de bir DexScreener'dan kontrol edilir) */
+  SCAN_MAX_CANDIDATES: num(900),
 
   // --- Analiz ---
   /** 0 = kapalı. Örn 24: günde bir keşif → analiz → strateji çıkarımı (yeniden başlatmada sayaç korunur) */
@@ -85,7 +90,7 @@ const schema = z.object({
   ALERT_REPEAT_HOURS: num(2),
 
   /** Tarafsız evren: GeckoTerminal yeni havuzlar listesi kaç dakikada bir kaydedilsin (0 = kapalı) */
-  UNIVERSE_RECORDER_MINUTES: num(5),
+  UNIVERSE_RECORDER_MINUTES: num(2),
   /** Tarafsız evrende kayıtlar kaç gün saklansın */
   UNIVERSE_RETENTION_DAYS: num(120),
 

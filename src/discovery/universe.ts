@@ -103,19 +103,22 @@ export const universe = {
 };
 
 /** Bir tur kayıt: yeni havuzlar listesini çekip evrene ekler */
-export async function recordNewPools(nowMs = Date.now()): Promise<{ fetched: number; parsed: number; added: number }> {
+export async function recordNewPools(nowMs = Date.now()): Promise<{ fetched: number; parsed: number; added: number; rows: UniverseRow[] }> {
   const pools = await geckoterminal.newPools(1);
   const rows = pools.map((p) => parsePool(p, nowMs)).filter((r): r is UniverseRow => r !== null);
   if (pools.length > 0 && rows.length === 0) {
     log.warn({ fetched: pools.length }, 'yeni havuzlar ayrıştırılamadı: GeckoTerminal yanıt formatı değişmiş olabilir');
   }
   const added = universe.insertMany(rows);
-  return { fetched: pools.length, parsed: rows.length, added };
+  return { fetched: pools.length, parsed: rows.length, added, rows };
 }
 
 let failures = 0;
 
-export function startUniverseRecorder(): NodeJS.Timeout | null {
+/**
+ * @param onPools her turda bulunan yeni havuzlar (işlem taramasına aday olarak verilir)
+ */
+export function startUniverseRecorder(onPools?: (rows: UniverseRow[]) => void): NodeJS.Timeout | null {
   const minutes = config.UNIVERSE_RECORDER_MINUTES;
   if (minutes <= 0) {
     log.info('tarafsız evren kaydı kapalı');
@@ -125,7 +128,8 @@ export function startUniverseRecorder(): NodeJS.Timeout | null {
     try {
       const r = await recordNewPools();
       failures = 0;
-      log.debug(r, 'evren kaydı');
+      log.debug({ fetched: r.fetched, parsed: r.parsed, added: r.added }, 'evren kaydı');
+      if (r.rows.length) onPools?.(r.rows);
       // saklama süresini aşan kayıtları temizle (indeksli, ucuz sorgu)
       universe.prune(Date.now() - config.UNIVERSE_RETENTION_DAYS * 86400_000);
     } catch (err) {
