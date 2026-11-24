@@ -42,40 +42,93 @@ interface Weighted<T> {
   w: number;
 }
 
+export interface ExitStep {
+  multiple: number;
+  fraction: number;
+}
+
+export const MAX_TP_LEVELS = 3;
+
+/**
+ * Bir turun satışlarını `n` sıralı dilime indirger. Satış sayısı n'den fazlaysa ardışık satışlar
+ * sayıca eşit gruplanır (grup katı = miktar ağırlıklı ortalama); azsa son satış her zaman son dilime gider
+ * (son satış = "kalanı sat"). Oranlar turun toplam satışına göre normalize edilir.
+ */
+export function toTranches(exits: ExitStep[], n: number): Array<ExitStep | undefined> {
+  const m = exits.length;
+  const groups: Array<ExitStep[]> = Array.from({ length: n }, () => []);
+  if (m >= n) exits.forEach((e, j) => groups[Math.floor((j * n) / m)]!.push(e));
+  else {
+    exits.slice(0, -1).forEach((e, j) => groups[j]!.push(e));
+    groups[n - 1]!.push(exits[m - 1]!);
+  }
+  const total = exits.reduce((s, e) => s + e.fraction, 0);
+  return groups.map((g) => {
+    if (!g.length) return undefined;
+    const f = g.reduce((s, e) => s + e.fraction, 0);
+    return { multiple: g.reduce((s, e) => s + e.multiple * e.fraction, 0) / f, fraction: f / total };
+  });
+}
+
 /**
  * Kazanan turların satışlarından kâr alma merdiveni çıkarır.
- * Satışlar kata göre sıralanır; kümülatif satılan oranın %33/%66/%100 noktaları TP seviyesi olur.
+ * 1. Kısmi satış nadirse tek TP: turların ortalama çıkış katının ağırlıklı medyanı.
+ * 2. Değilse tipik satış sayısı (en fazla 3) kadar seviye. Her seviyenin katı ve satış oranı, tüm turlarda
+ *    o sıradaki satışın ağırlıklı medyanıdır ("ilk satış genelde 2x'te %50" gibi).
  */
-export function deriveTakeProfits(winnerExits: Weighted<{ multiple: number; fraction: number }>[], partialExitRate: number): TakeProfit[] {
-  const exits = winnerExits.filter((e) => e.v.multiple > 1.05 && e.v.fraction > 0);
-  if (!exits.length) return [{ multiple: 2, sellPct: 100 }];
-  if (partialExitRate < 0.35) {
-    const m = weightedQuantile(exits.map((e) => e.v.multiple), exits.map((e) => e.w * e.v.fraction), 0.5);
+export function deriveTakeProfits(winnerTrips: Weighted<ExitStep[]>[], partialExitRate: number): TakeProfit[] {
+  const trips = winnerTrips
+    .map((t) => ({ w: t.w, exits: t.v.filter((e) => e.multiple > 1.05 && e.fraction > 0) }))
+    .filter((t) => t.exits.length > 0);
+  if (!trips.length) return [{ multiple: 2, sellPct: 100 }];
+
+  const counts = trips.map((t) => t.exits.length);
+  const n = Math.max(1, Math.min(MAX_TP_LEVELS, Math.round(weightedQuantile(counts, trips.map((t) => t.w), 0.5))));
+  if (partialExitRate < 0.35 || n === 1) {
+    const avgMultiple = trips.map((t) => {
+      const f = t.exits.reduce((s, e) => s + e.fraction, 0);
+      return t.exits.reduce((s, e) => s + e.multiple * e.fraction, 0) / f;
+    });
+    const m = weightedQuantile(avgMultiple, trips.map((t) => t.w), 0.5);
     return [{ multiple: niceMultiple(Math.max(1.2, m)), sellPct: 100 }];
   }
-  const sorted = [...exits].sort((a, b) => a.v.multiple - b.v.multiple);
-  const total = sorted.reduce((s, e) => s + e.w * e.v.fraction, 0);
-  const levels = [1 / 3, 2 / 3, 0.95];
-  const tps: TakeProfit[] = [];
-  let acc = 0;
-  let li = 0;
-  for (const e of sorted) {
-    acc += e.w * e.v.fraction;
-    while (li < levels.length && acc / total >= levels[li]!) {
-      tps.push({ multiple: niceMultiple(Math.max(1.2, e.v.multiple)), sellPct: li < 2 ? 33 : 34 });
-      li++;
-    }
+
+  const perTrip = trips.map((t) => ({ w: t.w, tranches: toTranches(t.exits, n) }));
+  const levels: ExitStep[] = [];
+  for (let k = 0; k < n; k++) {
+    const rows = perTrip.filter((t) => t.tranches[k]).map((t) => ({ w: t.w, s: t.tranches[k]! }));
+    if (!rows.length) continue;
+    const ws = rows.map((r) => r.w);
+    levels.push({
+      multiple: niceMultiple(Math.max(1.2, weightedQuantile(rows.map((r) => r.s.multiple), ws, 0.5))),
+      fraction: weightedQuantile(rows.map((r) => r.s.fraction), ws, 0.5),
+    });
   }
-  // aynı seviyeleri birleştir, artan sırayı garanti et
-  const merged: TakeProfit[] = [];
-  for (const tp of tps) {
+
+  // katlar artan olmalı: yuvarlama sonrası aynı ya da düşük kalan seviye bir öncekiyle birleşir
+  const merged: ExitStep[] = [];
+  for (const l of levels) {
     const last = merged[merged.length - 1];
-    if (last && tp.multiple <= last.multiple) last.sellPct = Math.min(100, last.sellPct + tp.sellPct);
-    else merged.push({ ...tp });
+    if (last && l.multiple <= last.multiple) last.fraction += l.fraction;
+    else merged.push({ ...l });
   }
-  const totalPct = merged.reduce((s, t) => s + t.sellPct, 0);
-  merged[merged.length - 1]!.sellPct += 100 - totalPct;
-  return merged;
+  const totalFrac = merged.reduce((s, l) => s + l.fraction, 0);
+  const tps: TakeProfit[] = merged.map((l) => ({ multiple: l.multiple, sellPct: Math.round((100 * l.fraction) / totalFrac) }));
+  // yuvarlamada %0'a düşen seviye bir sonrakine katılır; son seviye kalanı alır
+  const out: TakeProfit[] = [];
+  let carry = 0;
+  for (let i = 0; i < tps.length; i++) {
+    const tp = tps[i]!;
+    if (i < tps.length - 1 && tp.sellPct + carry < 1) {
+      carry += tp.sellPct;
+      continue;
+    }
+    out.push({ multiple: tp.multiple, sellPct: tp.sellPct + carry });
+    carry = 0;
+  }
+  const used = out.slice(0, -1).reduce((s, t) => s + t.sellPct, 0);
+  out[out.length - 1]!.sellPct = 100 - used;
+  return out;
 }
 
 /** Bir cüzdan grubundan parametreli strateji üretir */
@@ -115,7 +168,7 @@ export function extractStrategy(
     : 0;
 
   // ---- Çıkış ----
-  const winnerExits = winners.flatMap((t) => t.v.exits.map((e) => ({ v: { multiple: e.multiple, fraction: e.fraction }, w: t.w })));
+  const winnerExits = winners.map((t) => ({ v: t.v.exits.map((e) => ({ multiple: e.multiple, fraction: e.fraction })), w: t.w }));
   const partialExitRate = tripsW.filter((t) => t.v.sells.length > 1).length / tripsW.length;
   const takeProfits = deriveTakeProfits(winnerExits, partialExitRate);
   const lossMultiple = wq(losers.map((t) => ({ v: t.v.proceedsSol / t.v.costSol, w: t.w })), 0.5);

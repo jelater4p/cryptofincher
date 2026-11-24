@@ -91,22 +91,56 @@ describe('k-means', () => {
 });
 
 describe('strateji çıkarımı', () => {
-  it('kazanan satışlarından TP merdivenini çıkarır', () => {
-    const exits = [
-      { v: { multiple: 2, fraction: 0.5 }, w: 1 },
-      { v: { multiple: 4, fraction: 0.5 }, w: 1 },
-      { v: { multiple: 2.1, fraction: 0.5 }, w: 1 },
-      { v: { multiple: 3.9, fraction: 0.5 }, w: 1 },
-    ];
-    const tps = deriveTakeProfits(exits, 0.8);
-    expect(tps[0]!.multiple).toBe(2);
-    expect(tps[tps.length - 1]!.multiple).toBe(4);
+  const trip = (...exits: Array<[number, number]>) => ({ v: exits.map(([multiple, fraction]) => ({ multiple, fraction })), w: 1 });
+
+  it('satış oranlarını olduğu gibi korur: 2x\'te %50, 4x\'te %50', () => {
+    const tps = deriveTakeProfits([trip([2, 0.5], [4, 0.5]), trip([2.1, 0.5], [3.9, 0.5]), trip([1.9, 0.5], [4.1, 0.5])], 0.8);
+    expect(tps).toEqual([
+      { multiple: 2, sellPct: 50 },
+      { multiple: 4, sellPct: 50 },
+    ]);
+  });
+
+  it('eşit olmayan oranları korur: 1.5x\'te %25, 3x\'te kalan %75', () => {
+    const tps = deriveTakeProfits([trip([1.5, 0.25], [3, 0.75]), trip([1.5, 0.25], [3, 0.75]), trip([1.6, 0.2], [2.9, 0.8])], 0.9);
+    expect(tps).toEqual([
+      { multiple: 1.5, sellPct: 25 },
+      { multiple: 3, sellPct: 75 },
+    ]);
+  });
+
+  it('üç kademeli satışı üç TP seviyesine çevirir', () => {
+    const tps = deriveTakeProfits(
+      [trip([2, 0.3], [3, 0.3], [5, 0.4]), trip([1.9, 0.3], [3.1, 0.3], [5.2, 0.4]), trip([2.1, 0.3], [2.9, 0.3], [4.8, 0.4])],
+      0.9,
+    );
+    expect(tps).toEqual([
+      { multiple: 2, sellPct: 30 },
+      { multiple: 3, sellPct: 30 },
+      { multiple: 5, sellPct: 40 },
+    ]);
+  });
+
+  it('çok sayıda küçük satışı en fazla 3 seviyeye toplar, toplam her zaman %100', () => {
+    const many = trip([1.5, 0.2], [2, 0.2], [2.5, 0.2], [3, 0.2], [4, 0.2]);
+    const tps = deriveTakeProfits([many, many, many, many], 0.9);
+    expect(tps.length).toBe(3);
     expect(tps.reduce((s, t) => s + t.sellPct, 0)).toBe(100);
+    for (let i = 1; i < tps.length; i++) expect(tps[i]!.multiple).toBeGreaterThan(tps[i - 1]!.multiple);
+  });
+
+  it('satış sayısı farklı turlarda son satış "kalanı sat" seviyesine gider', () => {
+    // çoğunluk 2 kademe; tek satışlık tur sadece son seviyenin katını etkiler
+    const tps = deriveTakeProfits([trip([2, 0.5], [4, 0.5]), trip([2, 0.5], [4, 0.5]), trip([4, 1])], 0.7);
+    expect(tps).toEqual([
+      { multiple: 2, sellPct: 50 },
+      { multiple: 4, sellPct: 50 },
+    ]);
   });
 
   it('tek satış yapan cüzdanlarda tek TP üretir', () => {
-    const tps = deriveTakeProfits([{ v: { multiple: 3, fraction: 1 }, w: 1 }], 0.1);
-    expect(tps).toEqual([{ multiple: 3, sellPct: 100 }]);
+    expect(deriveTakeProfits([trip([3, 1])], 0.1)).toEqual([{ multiple: 3, sellPct: 100 }]);
+    expect(deriveTakeProfits([trip([3, 1]), trip([3.2, 1])], 0.9)).toEqual([{ multiple: 3, sellPct: 100 }]);
   });
 
   it('cüzdan davranışını strateji parametrelerine çevirir', () => {
@@ -115,8 +149,12 @@ describe('strateji çıkarımı', () => {
     expect(s).not.toBeNull();
     expect(s.segment).toBe('memecoin');
     expect(s.exit.stopLossMultiple).toBeCloseTo(0.65, 2);
-    expect(s.exit.takeProfits[0]!.multiple).toBe(2);
-    expect(s.exit.takeProfits[s.exit.takeProfits.length - 1]!.multiple).toBe(4);
+    // cüzdan 2x'te yarısını, 4x'te kalanını satıyor: strateji bunu birebir almalı
+    expect(s.exit.takeProfits).toEqual([
+      { multiple: 2, sellPct: 50 },
+      { multiple: 4, sellPct: 50 },
+    ]);
+    expect(s.description).toContain("2x'te %50, 4x'te %50");
     expect(s.entry.maxPoolAgeSec).toBeGreaterThanOrEqual(600);
     expect(s.exit.maxHoldSec).toBeGreaterThanOrEqual(1800);
     // mcap: 1e-6 SOL * 1e9 arz * 100 $/SOL = $100K
