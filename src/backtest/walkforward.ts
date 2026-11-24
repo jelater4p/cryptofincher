@@ -7,7 +7,16 @@ import { getDb } from '../storage/db.js';
 import { extractStrategies, extractStrategy, type WalletInput } from '../strategy/extractor.js';
 import type { StrategySpec } from '../strategy/types.js';
 import { fmtDuration } from '../strategy/describe.js';
-import { collectTrades, defaultFee, selectUniverse, type CandleProvider, type TimeWindow } from './runner.js';
+import {
+  collectTrades,
+  defaultFee,
+  pickUniverse,
+  universeWarnings,
+  type CandleProvider,
+  type CoverageStats,
+  type TimeWindow,
+  type UniversePick,
+} from './runner.js';
 import { simulatePortfolio, type SimTrade } from './simulator.js';
 
 const log = childLogger('walkforward');
@@ -47,7 +56,10 @@ export interface WalletHistory {
 
 export interface WalkForwardDeps {
   wallets: WalletHistory[];
+  /** keşif ve cüzdan analizinde görülen tokenlar (yanlı olabilir) */
   tokens: TokenInfo[];
+  /** açıldıkları anda kaydedilen tarafsız evren; yeterliyse tek başına kullanılır */
+  unbiasedTokens?: TokenInfo[];
   candles?: CandleProvider;
   nowSec?: number;
 }
@@ -103,6 +115,8 @@ export interface FoldResult {
   /** kayıtlı (sabit) stratejinin bu test penceresindeki sonucu: dönem tutarlılığı için */
   fixedSpecOos: PerfSummary | null;
   walletPersistence: WalletPersistence;
+  /** test penceresinin evreni: tarafsız mı, kaç token, kaçında veri yok */
+  testUniverse?: { source: UniversePick['source']; tokens: number; unbiasedAvailable: number; missingData: number };
   valid: boolean;
   note?: string;
 }
@@ -126,6 +140,9 @@ export interface WalkForwardReport {
     oosProfitFactor: number | null;
     oosProfitableFoldRate: number | null;
     oosTrades: number;
+    /** test evreni tarafsız olan geçerli tur sayısı */
+    unbiasedTestFolds: number;
+    testCoverage: CoverageStats;
     /** parametre → kararlı mı */
     paramStability: Record<string, { value: number; stable: boolean }>;
     stabilityScore: number | null;
@@ -296,6 +313,7 @@ export async function runWalkForward(
   const isTradesAll: SimTrade[] = [];
   const oosTradesAll: SimTrade[] = [];
   const specSummaries: SpecSummary[] = [];
+  const testCoverage: CoverageStats = { attempted: 0, noCandles: 0, noSupply: 0 };
 
   for (const w of windows) {
     const trainEval = evaluateWalletsInWindow(histories, w.train, o.minTrainTrips);
@@ -325,14 +343,14 @@ export async function runWalkForward(
         if (foldSpec) {
           // boyutlandırma ve yürütme ayarları kullanıcıya ait: kayıtlı stratejiden alınır
           foldSpec = { ...foldSpec, sizing: saved.sizing, execution: saved.execution };
-          isTrades = await tradesFor(foldSpec, deps, w.train, o, nowSec);
+          isTrades = (await tradesFor(foldSpec, deps, w.train, o, nowSec)).trades;
         }
       } else {
         // en iyi görüneni seç: öğrenme döneminde en yüksek getirili strateji
         const { specs } = extractStrategies(selected);
         let best: { spec: StrategySpec; trades: SimTrade[]; ret: number } | null = null;
         for (const s of specs) {
-          const tr = await tradesFor(s, deps, w.train, o, nowSec);
+          const tr = (await tradesFor(s, deps, w.train, o, nowSec)).trades;
           if (tr.length < o.minTradesPerFold) continue;
           const ret = simulatePortfolio(s, tr).totalReturnPct;
           if (!best || ret > best.ret) best = { spec: s, trades: tr, ret };
@@ -354,7 +372,17 @@ export async function runWalkForward(
       fold.spec = summarizeSpec(foldSpec);
       specSummaries.push(fold.spec);
       fold.inSample = summarize(foldSpec, isTrades);
-      const oosTrades = await tradesFor(foldSpec, deps, w.test, o, nowSec);
+      const oos = await tradesFor(foldSpec, deps, w.test, o, nowSec);
+      const oosTrades = oos.trades;
+      fold.testUniverse = {
+        source: oos.pick.source,
+        tokens: oos.pick.tokens.length,
+        unbiasedAvailable: oos.pick.unbiasedAvailable,
+        missingData: oos.stats.noCandles + oos.stats.noSupply,
+      };
+      testCoverage.attempted += oos.stats.attempted;
+      testCoverage.noCandles += oos.stats.noCandles;
+      testCoverage.noSupply += oos.stats.noSupply;
       fold.outOfSample = summarize(foldSpec, oosTrades);
       fold.valid = oosTrades.length >= o.minTradesPerFold;
       if (!fold.valid) fold.note = `Test penceresinde sadece ${oosTrades.length} işlem`;
@@ -363,7 +391,7 @@ export async function runWalkForward(
         oosTradesAll.push(...oosTrades);
       }
     }
-    if (saved) fold.fixedSpecOos = summarize(saved, await tradesFor(saved, deps, w.test, o, nowSec));
+    if (saved) fold.fixedSpecOos = summarize(saved, (await tradesFor(saved, deps, w.test, o, nowSec)).trades);
     folds.push(fold);
     log.info({ fold: w.index, valid: fold.valid, oos: fold.outOfSample?.totalReturnPct }, 'tur tamamlandı');
   }
@@ -392,6 +420,8 @@ export async function runWalkForward(
     oosProfitFactor: pf(oosTradesAll),
     oosProfitableFoldRate: valid.length ? round(valid.filter((f) => f.outOfSample!.totalReturnPct > 0).length / valid.length, 2) : null,
     oosTrades: oosTradesAll.length,
+    unbiasedTestFolds: valid.filter((f) => f.testUniverse?.source === 'unbiased').length,
+    testCoverage,
     paramStability: stability.params,
     stabilityScore: stability.score,
     walletSelectionEdge: persist.length
@@ -399,9 +429,19 @@ export async function runWalkForward(
       : null,
   };
   const { verdict, reasons } = decideVerdict(aggregate);
+  const withUniverse = folds.filter((f) => f.testUniverse);
+  const allUnbiased = valid.length > 0 && aggregate.unbiasedTestFolds === valid.length;
   const warnings = [
     'Cüzdanlar, aldıkları tokenlar sonradan yükseldiği için keşfedildi: test dönemleri bu seçimden tamamen bağımsız değil, sonuçlar hâlâ biraz iyimser olabilir.',
-    'Token evreni trend listelerinden ve cüzdanların işlem yaptığı tokenlardan oluşur (survivorship bias).',
+    ...universeWarnings(
+      {
+        source: allUnbiased ? 'unbiased' : 'mixed',
+        unbiasedAvailable: withUniverse.length ? Math.min(...withUniverse.map((f) => f.testUniverse!.unbiasedAvailable)) : 0,
+        tokens: valid.reduce((s, f) => s + (f.testUniverse?.tokens ?? 0), 0),
+      },
+      testCoverage,
+      'windows',
+    ),
   ];
   if (aggregate.walletSelectionEdge !== null && aggregate.walletSelectionEdge <= 0)
     warnings.push('Öğrenme döneminde seçilen cüzdanlar, test döneminde seçilmeyenlerden daha kârlı değil: "kazanan" cüzdanların başarısı kalıcı görünmüyor.');
@@ -421,13 +461,16 @@ export async function runWalkForward(
 }
 
 async function tradesFor(spec: StrategySpec, deps: WalkForwardDeps, window: TimeWindow, o: WalkForwardOptions, nowSec: number) {
-  const universe = selectUniverse(spec, deps.tokens, window, o.maxTokensPerWindow);
-  return collectTrades(spec, universe, {
+  const pick = pickUniverse(spec, deps.tokens, deps.unbiasedTokens ?? [], window, o.maxTokensPerWindow);
+  const stats: CoverageStats = { attempted: 0, noCandles: 0, noSupply: 0 };
+  const trades = await collectTrades(spec, pick.tokens, {
     feePctPerSide: o.feePctPerSide ?? defaultFee(spec),
     candles: deps.candles,
     window,
     nowSec,
+    stats,
   });
+  return { trades, pick, stats };
 }
 
 // ---------------------------------------------------------------- kalıcılık
@@ -473,6 +516,7 @@ export function formatWalkForward(r: WalkForwardReport): string {
         ? ` (${Object.entries(a.paramStability).map(([k, v]) => `${k.split('_')[0]} ${v.stable ? '✓' : '✗'}`).join(', ')})`
         : ''
     }`,
+    `Test evreni: ${a.validFolds ? `${a.unbiasedTestFolds}/${a.validFolds} geçerli turda tarafsız` : '?'}`,
     `Cüzdan seçiminin katkısı: ${a.walletSelectionEdge === null ? '?' : `${a.walletSelectionEdge > 0 ? '+' : ''}${Math.round(a.walletSelectionEdge * 100)} puan`}`,
     '',
     'Turlar (test dönemi: getiri / kazanma / işlem):',

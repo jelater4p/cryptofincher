@@ -197,6 +197,25 @@ describe('walk-forward uçtan uca', () => {
     expect(r.verdict).toBe('insufficient_data');
   });
 
+  it('tarafsız evren yeterliyse test pencerelerinde sadece onu kullanır ve bunu raporlar', async () => {
+    const u = universe(null);
+    // pencere başına 7 gün × 4 token = 28 tarafsız token (≥ 20)
+    const r = await runWalkForward(saved, { wallets: histories, tokens: [], unbiasedTokens: u.tokens, candles: u.candles, nowSec });
+    expect(r.aggregate.validFolds).toBe(5);
+    expect(r.folds.every((f) => f.testUniverse?.source === 'unbiased')).toBe(true);
+    expect(r.aggregate.unbiasedTestFolds).toBe(5);
+    expect(r.warnings.join(' ')).toContain('Tüm test pencerelerinde tarafsız evren kullanıldı');
+    expect(r.warnings.join(' ')).not.toContain('survivorship');
+    expect(formatWalkForward(r)).toContain('5/5 geçerli turda tarafsız');
+  });
+
+  it('tarafsız evren yokken yanlılık uyarısı verir', async () => {
+    const u = universe(null);
+    const r = await runWalkForward(saved, { wallets: histories, tokens: u.tokens, candles: u.candles, nowSec });
+    expect(r.aggregate.unbiasedTestFolds).toBe(0);
+    expect(r.warnings.join(' ')).toContain('survivorship');
+  });
+
   it('sonuç kaydedilir ve en son sonuç okunur', async () => {
     const u = universe(null);
     const r = await runWalkForward(saved, { wallets: histories, tokens: u.tokens, candles: u.candles, nowSec });

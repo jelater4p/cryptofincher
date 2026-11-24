@@ -12,7 +12,32 @@ interface OhlcvResponse {
   data?: { attributes?: { ohlcv_list?: Array<[number, number, number, number, number, number]> } };
 }
 
+/** GeckoTerminal havuz kaydı (alanlar eksik gelebilir: ayrıştırıcı savunmacıdır) */
+export interface GtPool {
+  id?: string;
+  attributes?: {
+    address?: string;
+    name?: string;
+    pool_created_at?: string | null;
+    base_token_price_usd?: string | null;
+    fdv_usd?: string | null;
+    market_cap_usd?: string | null;
+  };
+  relationships?: {
+    base_token?: { data?: { id?: string } | null };
+    quote_token?: { data?: { id?: string } | null };
+    dex?: { data?: { id?: string } | null };
+  };
+}
+
 export const geckoterminal = {
+  /** Solana'da en yeni açılan havuzlar (sayfa başı 20). Performanstan bağımsız, açıldıkları anda listelenir. */
+  async newPools(page = 1): Promise<GtPool[]> {
+    const url = `${config.GECKOTERMINAL_BASE_URL}/networks/solana/new_pools?page=${page}`;
+    const res = await fetchJson<{ data?: GtPool[] }>(url, { limiter, retries: 2 });
+    return res.data ?? [];
+  },
+
   /**
    * OHLCV mumları (USD). `aggregate`: minute için 1/5/15, hour için 1/4/12, day için 1.
    * Sonuçlar önbelleğe yazılır. Eskiden yeniye sıralı döner.

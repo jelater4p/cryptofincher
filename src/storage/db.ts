@@ -143,6 +143,19 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX IF NOT EXISTS idx_walkforwards_target ON walkforwards(target, id);
   `,
+  // v3: tarafsız token evreni (açıldıkları anda, performanslarına bakılmadan kaydedilen havuzlar)
+  `
+  CREATE TABLE IF NOT EXISTS universe (
+    mint TEXT PRIMARY KEY,
+    pool TEXT NOT NULL,           -- ilk görülen (açılış) havuzu: sonradan değişmez
+    dex TEXT,
+    created_at INTEGER NOT NULL,  -- havuz açılışı (ms)
+    supply REAL,
+    initial_fdv_usd REAL,
+    recorded_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_universe_created ON universe(created_at);
+  `,
 ];
 
 export type DB = Database.Database;

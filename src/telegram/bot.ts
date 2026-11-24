@@ -4,7 +4,7 @@ import { childLogger } from '../core/logger.js';
 import { round } from '../core/stats.js';
 import { analyzeWallet, storedReports } from '../analysis/walletAnalyzer.js';
 import { FLAG_DESCRIPTIONS } from '../analysis/scoring.js';
-import { runBacktest } from '../backtest/runner.js';
+import { MIN_UNBIASED, runBacktest } from '../backtest/runner.js';
 import { heliusCredits } from '../data/helius.js';
 import { heliusAlert } from '../data/heliusAlert.js';
 import { discoverFromToken } from '../discovery/discovery.js';
@@ -290,7 +290,7 @@ export function startTelegram(engine: TradingEngine) {
         'notify',
         [
           `📊 Backtest ${id} (${s.spec.name})`,
-          `Evren: ${r.universe} token, sinyal: ${r.tokensWithSignal}, işlem: ${r.trades} (kapasite nedeniyle atlanan ${r.skippedForCapacity})`,
+          `Evren: ${r.universe} token (${r.universeSource === 'unbiased' ? 'tarafsız ✅' : `karışık, tarafsız ${r.unbiasedAvailable}/${MIN_UNBIASED}`}), sinyal: ${r.tokensWithSignal}, işlem: ${r.trades} (kapasite nedeniyle atlanan ${r.skippedForCapacity})`,
           `Kazanma %${Math.round(r.winRate * 100)}, ort. işlem %${r.avgPnlPct.toFixed(1)}, PF ${r.profitFactor.toFixed(2)}`,
           `Toplam getiri %${r.totalReturnPct.toFixed(1)}, max düşüş %${r.maxDrawdownPct.toFixed(1)}`,
           `Çıkışlar: ${Object.entries(r.exitReasonCounts).map(([k, v]) => `${k}:${v}`).join(' ')}`,
