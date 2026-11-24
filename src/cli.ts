@@ -46,7 +46,7 @@ const commands: Record<string, { help: string; run: () => Promise<unknown> | unk
   'discover:token': { help: '<mint>  bir tokenın erken alıcıları', run: async () => console.log(await discoverFromToken(args[0]!, { recent: 100 })) },
   analyze: {
     help: '[adres]  cüzdanı ya da bekleyenleri analiz et',
-    run: async () => console.log(args[0] ? JSON.stringify(await analyzeWallet(args[0]), null, 2) : await analyzePending(Number(args[1] ?? 25))),
+    run: async () => console.log(args[0] ? JSON.stringify(await analyzeWallet(args[0]), null, 2) : await analyzePending(args[1] ? Number(args[1]) : undefined)),
   },
   enrich: { help: 'uygun cüzdanların işlemlerine giriş bağlamı ekle', run: async () => console.log(await enrichEligible()) },
   extract: {

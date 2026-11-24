@@ -9,12 +9,12 @@ import { kv } from '../storage/repo.js';
 const log = childLogger('helius');
 
 /**
- * Kredi maliyetleri. Helius fiyatlandırması değişebilir; panelinizden (dashboard → usage)
- * gerçek değerleri kontrol edip env ile ezin. Varsayılanlar bilerek temkinli (yüksek) tutuldu.
+ * Kredi maliyetleri (botun kendi bütçe hesabı için). Panelde gözlenen gerçek kullanım çağrı başına
+ * yaklaşık 1 kredi; Helius fiyatlandırması değişirse env ile ezin.
  */
 const CREDIT_COST: Record<string, number> = {
-  getSignaturesForAddress: Number(process.env.HELIUS_CREDIT_GET_SIGNATURES ?? 10),
-  getTransaction: Number(process.env.HELIUS_CREDIT_GET_TRANSACTION ?? 10),
+  getSignaturesForAddress: Number(process.env.HELIUS_CREDIT_GET_SIGNATURES ?? 1),
+  getTransaction: Number(process.env.HELIUS_CREDIT_GET_TRANSACTION ?? 1),
   default: 1,
 };
 

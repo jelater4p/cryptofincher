@@ -226,7 +226,7 @@ export function startTelegram(engine: TradingEngine) {
       });
     }
     return bg(ctx, 'bekleyen cüzdan analizi', async () => {
-      const r = await analyzePending(25);
+      const r = await analyzePending();
       events.emit('notify', `🧪 ${r.analyzed} cüzdan analiz edildi, ${r.eligible} uygun.`);
     });
   });

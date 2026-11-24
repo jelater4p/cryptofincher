@@ -5,7 +5,8 @@ import { HeliusLimitError, heliusCredits } from './data/helius.js';
 import { solPriceService } from './data/solPrice.js';
 import { runDiscovery } from './discovery/discovery.js';
 import { events } from './engine/state.js';
-import { tokens, wallets } from './storage/repo.js';
+import { tokens, wallets, type WalletRow } from './storage/repo.js';
+import { config } from './config.js';
 import { universe } from './discovery/universe.js';
 import { runExtraction } from './strategy/pipeline.js';
 import { strategies } from './strategy/registry.js';
@@ -37,13 +38,53 @@ export async function runJob<T>(name: string, fn: () => Promise<T>): Promise<T |
 
 export const currentJob = () => running;
 
-/** Analiz edilmemiş (veya eski) cüzdanları analiz eder */
-export async function analyzePending(limit = 20, staleMs = 3 * 86400_000) {
-  const todo = wallets
-    .list()
-    .filter((w) => w.status === 'active' || w.source === 'manual' || !w.last_analyzed_at)
-    .filter((w) => !w.last_analyzed_at || Date.now() - w.last_analyzed_at > staleMs)
-    .slice(0, limit);
+export const REFRESH_AFTER_MS = 3 * 86400_000;
+
+/**
+ * Analiz sırası (saf fonksiyon). Öncelik:
+ * 1. elle eklenen cüzdanlar (hiç analiz edilmemiş ya da 3 günden eski)
+ * 2. hiç analiz edilmemiş keşif cüzdanları, en eski eklenen önce (kuyruk adil erir)
+ * 3. uygun (aktif) cüzdanların yenilenmesi (3 günden eski; sadece yeni işlemler çekilir, ucuz)
+ * 4. sadece "yeterli veri yok" yüzünden elenmiş ve daha sığ geçmişle analiz edilmiş cüzdanlar:
+ *    sınır büyüdüyse eksik eski geçmiş tamamlanır. Yeterli veriyle kârsız çıkanlara tekrar bakılmaz.
+ */
+export function selectWalletsToAnalyze(
+  rows: WalletRow[],
+  flagsByAddress: Map<string, string[]>,
+  opts: { now: number; maxTx: number; limit: number; staleMs?: number },
+): WalletRow[] {
+  const staleMs = opts.staleMs ?? REFRESH_AFTER_MS;
+  const byAdded = [...rows].sort((a, b) => a.added_at - b.added_at);
+  const isStale = (w: WalletRow) => !w.last_analyzed_at || opts.now - w.last_analyzed_at > staleMs;
+  const groups = [
+    byAdded.filter((w) => w.source === 'manual' && isStale(w)),
+    byAdded.filter((w) => w.source === 'discovered' && !w.last_analyzed_at),
+    byAdded.filter((w) => w.source === 'discovered' && w.status === 'active' && w.last_analyzed_at && isStale(w)),
+    byAdded.filter(
+      (w) =>
+        w.source === 'discovered' &&
+        w.status === 'excluded' &&
+        w.last_analyzed_at &&
+        (w.history_max ?? 0) < opts.maxTx &&
+        (flagsByAddress.get(w.address) ?? []).includes('insufficient_data'),
+    ),
+  ];
+  const out: WalletRow[] = [];
+  const seenAddr = new Set<string>();
+  for (const g of groups)
+    for (const w of g) {
+      if (out.length >= opts.limit) return out;
+      if (seenAddr.has(w.address)) continue;
+      seenAddr.add(w.address);
+      out.push(w);
+    }
+  return out;
+}
+
+/** Sıradaki cüzdanları analiz eder */
+export async function analyzePending(limit = config.ANALYSIS_WALLETS_PER_RUN) {
+  const flags = new Map(storedReports().map((r) => [r.address, r.flags as string[]]));
+  const todo = selectWalletsToAnalyze(wallets.list(), flags, { now: Date.now(), maxTx: config.ANALYSIS_MAX_TX_PER_WALLET, limit });
   let eligible = 0;
   for (const w of todo) {
     try {
@@ -70,7 +111,7 @@ export async function fullPipeline(opts: { discoverTokens?: number; analyzeLimit
   await solPriceService.syncHistory();
   const d = await runDiscovery(opts.discoverTokens ?? 3);
   events.emit('notify', `🔎 Keşif: ${d.tokens.length} kazanan token, ${d.wallets.length} aday cüzdan`);
-  const a = await analyzePending(opts.analyzeLimit ?? 25);
+  const a = await analyzePending(opts.analyzeLimit);
   events.emit('notify', `🧪 Analiz: ${a.analyzed} cüzdan, ${a.eligible} uygun. Kredi: ${heliusCredits.used().toLocaleString()}/${heliusCredits.limit().toLocaleString()}`);
   const e = await enrichEligible();
   const x = runExtraction();

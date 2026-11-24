@@ -25,6 +25,8 @@ export interface WalletRow {
   discovered_from: string | null;
   last_analyzed_at: number | null;
   newest_signature: string | null;
+  /** son analizde kullanılan geçmiş derinliği (işlem sayısı sınırı) */
+  history_max: number | null;
   status: 'active' | 'excluded';
 }
 
@@ -56,10 +58,12 @@ export const wallets = {
   remove(address: string) {
     getDb().prepare('DELETE FROM wallets WHERE address = ?').run(address);
   },
-  markAnalyzed(address: string, newestSignature: string | null) {
+  markAnalyzed(address: string, newestSignature: string | null, historyMax?: number) {
     getDb()
-      .prepare('UPDATE wallets SET last_analyzed_at = ?, newest_signature = COALESCE(?, newest_signature) WHERE address = ?')
-      .run(Date.now(), newestSignature, address);
+      .prepare(
+        'UPDATE wallets SET last_analyzed_at = ?, newest_signature = COALESCE(?, newest_signature), history_max = COALESCE(?, history_max) WHERE address = ?',
+      )
+      .run(Date.now(), newestSignature, historyMax ?? null, address);
   },
 };
 
