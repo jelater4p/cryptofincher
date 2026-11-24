@@ -7,6 +7,7 @@ import { universe } from './discovery/universe.js';
 import { engineState, events } from './engine/state.js';
 import { VERDICT_LABEL, walkforwards, type WalkForwardVerdict } from './backtest/walkforward.js';
 import { getDb } from './storage/db.js';
+import { pumpfunStreamStats } from './data/pumpfunStream.js';
 import { kv } from './storage/repo.js';
 import { strategies } from './strategy/registry.js';
 
@@ -65,6 +66,7 @@ export interface SummaryData {
   credits: { used: number; limit: number; sinceLastSummary: number | null };
   heliusAlert: { kind: HeliusAlertKind; detail: string } | null;
   universe: { added24h: number; total: number };
+  pumpfun: { enabled: boolean; connected: boolean; mode: 'light' | 'full' | null; createsLast24h: number };
 }
 
 function modeStats(mode: 'paper' | 'live', since: number): ModeStats {
@@ -128,6 +130,10 @@ export function collectSummaryData(now = Date.now()): SummaryData {
     },
     heliusAlert: alert ? { kind: alert.kind, detail: alert.detail } : null,
     universe: { added24h: universe.countSince(since), total: universe.total() },
+    pumpfun: (() => {
+      const p = pumpfunStreamStats(now);
+      return { enabled: p.enabled, connected: p.connected, mode: p.mode, createsLast24h: p.createsLast24h };
+    })(),
   };
 }
 
@@ -177,6 +183,11 @@ export function buildDailySummary(d: SummaryData): string {
   lines.push(
     `Tarafsız evren: son 24 saatte +${d.universe.added24h.toLocaleString()} token (toplam ${d.universe.total.toLocaleString()})` +
       (d.universe.added24h === 0 && config.UNIVERSE_RECORDER_MINUTES > 0 ? ' ⚠️ kayıt çalışmıyor olabilir, logları kontrol et' : ''),
+  );
+  lines.push(
+    d.pumpfun.enabled
+      ? `pump.fun akışı: ${d.pumpfun.connected ? '✅ bağlı' : '⚠️ bağlı değil'} (${d.pumpfun.mode === 'light' ? 'hafif mod' : 'tam mod'}), son 24 saatte ${d.pumpfun.createsLast24h.toLocaleString()} yeni token`
+      : 'pump.fun akışı: kapalı',
   );
   lines.push('');
   lines.push(

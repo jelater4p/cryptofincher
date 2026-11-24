@@ -41,7 +41,8 @@ async function main() {
   // Helius limit uyarıları + hatırlatmalar ve zamanlanmış keşif
   startMonitor();
   // tarafsız token evreni: yeni açılan havuzları performanslarına bakmadan kaydeder
-  startUniverseRecorder();
+  // ve aynı yeni havuzları işlem taramasına aday olarak verir
+  startUniverseRecorder((rows) => rows.forEach((r) => engine.addCandidate(r.mint)));
   if (config.DISCOVERY_INTERVAL_HOURS > 0) logger.info({ hours: config.DISCOVERY_INTERVAL_HOURS }, 'zamanlanmış keşif açık');
 
   const shutdown = () => {

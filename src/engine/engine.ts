@@ -54,7 +54,10 @@ export class TradingEngine {
     this.timers.push(setInterval(() => void this.scanTick(), config.SCAN_INTERVAL_SEC * 1000));
     this.timers.push(setInterval(() => void this.positionTick(), config.POSITION_CHECK_INTERVAL_SEC * 1000));
     if (config.PUMPFUN_STREAM) {
-      this.stopStream = startPumpfunStream((e) => this.addCandidate(e.mint));
+      this.stopStream = startPumpfunStream(
+        (e) => this.addCandidate(e.mint),
+        (msg) => events.emit('notify', msg),
+      );
     }
     log.info({ mode: engineState.mode() }, 'motor başladı');
   }
@@ -64,8 +67,23 @@ export class TradingEngine {
     this.stopStream?.();
   }
 
-  addCandidate(mint: string) {
-    if (!this.candidates.has(mint)) this.candidates.set(mint, Date.now());
+  /**
+   * Taramaya aday ekler. Liste ekleme anında sınırlanır: pump.fun akışı günde on binlerce token
+   * getirebilir ve aktif strateji yokken tarama (ve onun temizliği) çalışmaz. Map ekleme sırasını
+   * koruduğu için en eski adaylar baştadır.
+   */
+  addCandidate(mint: string, now = Date.now()) {
+    if (this.candidates.has(mint)) return;
+    this.candidates.set(mint, now);
+    const cap = config.SCAN_MAX_CANDIDATES;
+    for (const oldest of this.candidates.keys()) {
+      if (this.candidates.size <= cap) break;
+      this.candidates.delete(oldest);
+    }
+  }
+
+  candidateCount(): number {
+    return this.candidates.size;
   }
 
   watchlist(): string[] {
@@ -82,12 +100,9 @@ export class TradingEngine {
     // aktif stratejilerin izin verdiği en büyük havuz yaşına göre eski adayları at
     const maxAgeMs = Math.max(3600_000, ...strategies.active().map((s) => s.entry.maxPoolAgeSec * 1000));
     const now = Date.now();
-    for (const [m, at] of this.candidates) if (now - at > maxAgeMs && !this.watchlist().includes(m)) this.candidates.delete(m);
-    // en yeni 900 aday (30'luk 30 istek)
-    if (this.candidates.size > 900) {
-      const sorted = [...this.candidates.entries()].sort((a, b) => b[1] - a[1]).slice(0, 900);
-      this.candidates = new Map(sorted);
-    }
+    const watch = new Set(this.watchlist());
+    for (const [m, at] of this.candidates) if (now - at > maxAgeMs && !watch.has(m)) this.candidates.delete(m);
+    // üst sınır addCandidate'te uygulanıyor (SCAN_MAX_CANDIDATES)
   }
 
   async scanTick() {
