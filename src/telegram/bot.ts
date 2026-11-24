@@ -10,7 +10,8 @@ import { discoverFromToken } from '../discovery/discovery.js';
 import type { TradingEngine } from '../engine/engine.js';
 import { positionsRepo } from '../engine/positionsRepo.js';
 import { engineState, events } from '../engine/state.js';
-import { currentJob, enrichEligible, fullPipeline, analyzePending, runJob } from '../jobs.js';
+import { currentJob, enrichEligible, fullPipeline, analyzePending, runJob, walkForwardJob } from '../jobs.js';
+import { VERDICT_LABEL, formatWalkForward, walkforwards } from '../backtest/walkforward.js';
 import { getDb } from '../storage/db.js';
 import { kv, tokens, wallets } from '../storage/repo.js';
 import { fmtDuration, fmtUsd } from '../strategy/describe.js';
@@ -42,6 +43,7 @@ const HELP = `CryptoFincher komutları
 /stratejiler: liste
 /strateji <id>: detay
 /backtest <id>: geçmiş veride test
+/walkforward <id|hepsi> [öğrenGün] [testGün]: görülmemiş veride doğrulama
 /sec <id>: stratejiyi aktifleştir
 /birak <id>: stratejiyi kapat
 /ayar <id> <alan> <değer>: parametre değiştir (örn: /ayar ab12cd34 exit.stopLossMultiple 0.7)
@@ -231,7 +233,10 @@ export function startTelegram(engine: TradingEngine) {
       list
         .map(
           ({ spec, active }) =>
-            `${active ? '🟢' : '⚪️'} ${spec.id}: ${spec.name}\n   ${spec.evidence.wallets} cüzdan, ${spec.evidence.trips} işlem, kazanma %${Math.round(Number(spec.evidence.winRate) * 100)}`,
+            `${active ? '🟢' : '⚪️'} ${spec.id}: ${spec.name}\n   ${spec.evidence.wallets} cüzdan, ${spec.evidence.trips} işlem, kazanma %${Math.round(Number(spec.evidence.winRate) * 100)}\n   Walk-forward: ${(() => {
+              const wf = walkforwards.latest(spec.id);
+              return wf ? VERDICT_LABEL[wf.verdict] : 'yapılmadı';
+            })()}`,
         )
         .join('\n\n') + '\n\nDetay: /strateji <id>',
     );
@@ -259,6 +264,12 @@ export function startTelegram(engine: TradingEngine) {
         JSON.stringify({ entry: p.entry, sizing: p.sizing, exit: p.exit, execution: p.execution }, null, 1),
         '',
         btLine,
+        (() => {
+          const wf = walkforwards.latest(p.id);
+          return wf
+            ? `Son walk-forward: ${VERDICT_LABEL[wf.verdict]} (test medyan getiri %${wf.aggregate.oosMedianReturnPct ?? '?'}, ${wf.aggregate.validFolds} tur)`
+            : `Walk-forward yok: /walkforward ${p.id}`;
+        })(),
       ].join('\n'),
     );
   });
@@ -286,9 +297,37 @@ export function startTelegram(engine: TradingEngine) {
   });
 
   bot.command('sec', (ctx) => {
-    const id = arg(ctx)[0];
-    if (!id || !strategies.setActive(id, true)) return ctx.reply('Strateji bulunamadı');
-    return ctx.reply(`🟢 ${id} aktif. Mod: ${engineState.mode().toUpperCase()}`);
+    const [id, confirm] = arg(ctx);
+    if (!id || !strategies.get(id)) return ctx.reply('Strateji bulunamadı');
+    const wf = walkforwards.latest(id);
+    if (wf?.verdict === 'overfit' && confirm !== 'ONAY') {
+      return ctx.reply(
+        `⛔ ${id} walk-forward doğrulamasında AŞIRI UYUM çıktı: görülmemiş veride işe yaramadı.\n` +
+          wf.reasons.map((r) => `• ${r}`).join('\n') +
+          `\n\nYine de aktifleştirmek için: /sec ${id} ONAY`,
+      );
+    }
+    strategies.setActive(id, true);
+    const hint = !wf
+      ? `\nℹ️ Bu strateji henüz walk-forward ile doğrulanmadı: /walkforward ${id}`
+      : `\nWalk-forward: ${VERDICT_LABEL[wf.verdict]}`;
+    return ctx.reply(`🟢 ${id} aktif. Mod: ${engineState.mode().toUpperCase()}${hint}`);
+  });
+
+  bot.command('walkforward', (ctx) => {
+    const [rawTarget, train, test] = arg(ctx);
+    const target = !rawTarget || rawTarget === 'hepsi' ? '*' : rawTarget;
+    if (target !== '*' && !strategies.get(target)) return ctx.reply('Kullanım: /walkforward <id|hepsi> [öğrenGün] [testGün]');
+    const opts = {
+      ...(train ? { trainDays: Number(train) } : {}),
+      ...(test ? { testDays: Number(test) } : {}),
+    };
+    if ((opts.trainDays !== undefined && !(opts.trainDays > 0)) || (opts.testDays !== undefined && !(opts.testDays > 0)))
+      return ctx.reply('Gün değerleri pozitif sayı olmalı');
+    return bg(ctx, `walk-forward ${target === '*' ? 'hepsi' : target}`, async () => {
+      const r = await walkForwardJob(target, opts);
+      events.emit('notify', formatWalkForward(r));
+    });
   });
 
   bot.command('birak', (ctx) => {
@@ -361,6 +400,7 @@ export function startTelegram(engine: TradingEngine) {
     { command: 'durum', description: 'Durum' },
     { command: 'kesif', description: 'Keşif + analiz + strateji' },
     { command: 'stratejiler', description: 'Strateji listesi' },
+    { command: 'walkforward', description: 'Görülmemiş veride doğrulama' },
     { command: 'pozisyonlar', description: 'Açık pozisyonlar' },
     { command: 'pnl', description: 'Kâr/zarar' },
     { command: 'cuzdanlar', description: 'En iyi cüzdanlar' },

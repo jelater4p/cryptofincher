@@ -7,7 +7,8 @@ import { heliusCredits } from './data/helius.js';
 import { solPriceService } from './data/solPrice.js';
 import { discoverFromToken, runDiscovery } from './discovery/discovery.js';
 import { events } from './engine/state.js';
-import { analyzePending, enrichEligible, fullPipeline } from './jobs.js';
+import { analyzePending, enrichEligible, fullPipeline, walkForwardJob } from './jobs.js';
+import { formatWalkForward } from './backtest/walkforward.js';
 import { getDb } from './storage/db.js';
 import { wallets } from './storage/repo.js';
 import { extractFromWallets, runExtraction } from './strategy/pipeline.js';
@@ -73,6 +74,18 @@ const commands: Record<string, { help: string; run: () => Promise<unknown> | unk
       if (!s) throw new Error('strateji yok');
       const r = await runBacktest(s.spec, { maxTokens: Number(args[1] ?? 60) });
       console.log(JSON.stringify({ ...r, equityCurve: undefined }, null, 2));
+    },
+  },
+  walkforward: {
+    help: '<id|all> [öğrenGün] [testGün] [rolling|expanding]  görülmemiş veride doğrulama',
+    run: async () => {
+      const target = !args[0] || args[0] === 'all' ? '*' : args[0];
+      const r = await walkForwardJob(target, {
+        ...(args[1] ? { trainDays: Number(args[1]) } : {}),
+        ...(args[2] ? { testDays: Number(args[2]) } : {}),
+        ...(args[3] === 'expanding' ? { mode: 'expanding' as const } : {}),
+      });
+      console.log(formatWalkForward(r));
     },
   },
   'sol:sync': { help: 'SOL/USD geçmişini güncelle', run: () => solPriceService.syncHistory() },

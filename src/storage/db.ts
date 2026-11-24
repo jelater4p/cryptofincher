@@ -132,6 +132,17 @@ const MIGRATIONS: string[] = [
     ts INTEGER NOT NULL
   );
   `,
+  // v2: walk-forward doğrulama sonuçları
+  `
+  CREATE TABLE IF NOT EXISTS walkforwards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target TEXT NOT NULL,          -- strateji id ya da '*' (tüm çıkarım yöntemi)
+    created_at INTEGER NOT NULL,
+    verdict TEXT NOT NULL,
+    json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_walkforwards_target ON walkforwards(target, id);
+  `,
 ];
 
 export type DB = Database.Database;

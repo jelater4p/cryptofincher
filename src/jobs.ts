@@ -5,8 +5,10 @@ import { CreditBudgetExceeded, heliusCredits } from './data/helius.js';
 import { solPriceService } from './data/solPrice.js';
 import { runDiscovery } from './discovery/discovery.js';
 import { events } from './engine/state.js';
-import { wallets } from './storage/repo.js';
+import { tokens, wallets } from './storage/repo.js';
 import { runExtraction } from './strategy/pipeline.js';
+import { strategies } from './strategy/registry.js';
+import { runWalkForward, walkforwards, type WalkForwardOptions, type WalkForwardReport } from './backtest/walkforward.js';
 
 const log = childLogger('jobs');
 
@@ -72,4 +74,14 @@ export async function fullPipeline(opts: { discoverTokens?: number; analyzeLimit
   const x = runExtraction();
   events.emit('notify', `🧠 ${e} işlem zenginleştirildi. ${x.walletCount} cüzdandan ${x.specs.length} strateji çıkarıldı (silüet ${x.silhouette.toFixed(2)}). /stratejiler`);
   return { discovery: d, analysis: a, enriched: e, extraction: x };
+}
+
+/** Walk-forward: veritabanındaki tüm cüzdan geçmişleri ve token evreniyle */
+export async function walkForwardJob(target: string, opts: Partial<WalkForwardOptions> = {}): Promise<WalkForwardReport> {
+  const spec = target === '*' ? '*' : strategies.get(target)?.spec;
+  if (!spec) throw new Error(`Strateji yok: ${target}`);
+  const histories = wallets.list().map((w) => ({ address: w.address, trips: loadAnalyzedTrips(w.address).trips }));
+  const report = await runWalkForward(spec, { wallets: histories, tokens: tokens.all() }, opts);
+  walkforwards.save(report);
+  return report;
 }

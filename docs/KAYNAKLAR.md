@@ -53,4 +53,4 @@ Fiyatlar ve limitler sık değişir. Kullanmadan önce her sağlayıcının gün
 - **Davranış sınıflandırıcısı**: zenginleştirilmiş turlardan "giriş anındaki token özellikleri → kazanma olasılığı" modeli (gradient boosting). Kural tabanlı stratejiye ek filtre olarak kullanılır.
 - **Rejim tespiti**: memecoin piyasasının genel ısısı (pump.fun günlük mezun sayısı, SOL trendi). Stratejiler soğuk piyasada otomatik kısılır.
 - **Cüzdan ağı analizi**: aynı kaynaktan fonlanan cüzdanları birleştirme (sybil/bundle tespiti), insider kümelerini eleme.
-- **Walk-forward doğrulama**: stratejiyi eski veriden çıkarıp yeni veride test etmek (aşırı uyumu önler).
+- ~~Walk-forward doğrulama~~: eklendi (`/walkforward`).

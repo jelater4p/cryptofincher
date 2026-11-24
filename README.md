@@ -62,6 +62,28 @@ Zarar kesme: giriş fiyatının 0.62x seviyesinde (%38 zarar).
 
 Tüm parametreler Telegram'dan `/ayar` ile değiştirilebilir.
 
+## Walk-forward doğrulama
+
+Normal backtest iyimserdir, çünkü strateji büyük ölçüde test edildiği dönemin verisinden çıkarılır. Walk-forward bunu önler: veri zamana göre bölünür, strateji her turda sadece **öğrenme** penceresinden yeniden çıkarılır ve hemen sonraki, hiç görmediği **test** penceresinde denenir.
+
+```
+[ Öğren: 1-14. gün ][ Test: 15-21 ]
+         [ Öğren: 8-21. gün ][ Test: 22-28 ]
+                  [ Öğren: 15-28. gün ][ Test: 29-35 ] ...
+```
+
+- **Geleceğe bakma yok:** öğrenme penceresinde sadece o pencere bitmeden kapanmış işlemler kullanılır. Cüzdanlar da o dönemki performanslarına göre yeniden seçilir. O tarihte uygun olmayan bir cüzdan o turda kullanılmaz.
+- **Ölçülenler:** öğrenme ve test getirisi (tur başı medyan), kazanma oranı düşüşü, test kâr faktörü, kârlı tur oranı, parametrelerin turdan tura kararlılığı, seçilen cüzdanların test döneminde seçilmeyenlere göre daha kârlı olup olmadığı.
+- **Sonuç:** ✅ sağlam / 🟡 zayıf / ⛔ aşırı uyum / ❔ veri yetersiz. Aşırı uyum çıkan bir strateji `/sec` ile ancak açık onayla aktifleştirilir.
+
+```
+/walkforward <id>          # bir stratejinin kaynak cüzdanlarıyla
+/walkforward hepsi         # tüm çıkarım yöntemi: her turda öğrenmede en iyi görüneni seçip test eder
+/walkforward <id> 21 7     # 21 gün öğren, 7 gün test
+```
+
+Anlamlı sonuç için en az 3 haftalık işlem geçmişi gerekir. Ne kadar uzunsa o kadar iyi.
+
 ## Güvenlik (kapatılamaz)
 
 - **Zorunlu token filtresi:** mint authority veya freeze authority aktifse, RugCheck skoru eşiği aşıyorsa ya da tehlikeli risk varsa işleme girilmez. Veri alınamazsa da girilmez (fail-closed).
@@ -105,8 +127,9 @@ Sonra `.env` içinde `TRADING_MODE=live` yapın, `docker compose up -d` çalış
 2. `/cuzdanlar` ve `/cuzdan <adres>`: cüzdanların ne yaptığını incele.
 3. `/zenginlestir` ve ardından `/cikar`: giriş öncesi momentum bilgisiyle stratejileri güncelle.
 4. `/stratejiler`, `/strateji <id>`, `/backtest <id>`
-5. `/sec <id>`: önce **paper** modda en az birkaç gün çalıştır, `/pnl` ile izle.
-6. Sonuçlar tatmin ediciyse `/mod live ONAY`.
+5. `/walkforward <id>`: görülmemiş veride doğrula. Sadece ✅ ya da 🟡 çıkanlarla devam et.
+6. `/sec <id>`: önce **paper** modda en az birkaç gün çalıştır, `/pnl` ile izle.
+7. Sonuçlar tatmin ediciyse `/mod live ONAY`.
 
 CLI karşılıkları için `npm run cli` çalıştırın.
 
