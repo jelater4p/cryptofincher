@@ -62,6 +62,29 @@ const HELP = `CryptoFincher komutları
 
 export const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+/** HTML mesajın düz metin hali: etiketler atılır, kaçırılmış karakterler geri çevrilir */
+export function htmlToPlain(html: string): string {
+  return html
+    .replace(/<a href="([^"]*)">([^<]*)<\/a>/g, '$2: $1')
+    .replace(/<\/?(code|b|i)>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * HTML biçimli cevap. Telegram biçimi reddederse (geçersiz etiket vb.) aynı içerik düz metin olarak
+ * gönderilir: bir biçim hatası komutu cevapsız bırakmasın.
+ */
+async function replyHtml(ctx: Context, html: string) {
+  try {
+    return await ctx.reply(html, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+  } catch (err) {
+    log.warn({ err: String(err) }, 'HTML mesaj reddedildi, düz metin gönderiliyor');
+    return ctx.reply(htmlToPlain(html), { link_preview_options: { is_disabled: true } });
+  }
+}
+
 type StoredReport = ReturnType<typeof storedReports>[number];
 
 /**
@@ -89,7 +112,7 @@ export function formatWalletList(reports: StoredReport[], max = 15): string {
     '',
     lines.join('\n\n'),
     '',
-    'Detay: /cuzdan 1 (sıra no) ya da /cuzdan <adresin ilk harfleri>',
+    'Detay: /cuzdan 1 (sıra no) ya da /cuzdan &lt;adresin ilk harfleri&gt;',
   ].join('\n');
 }
 
@@ -212,7 +235,7 @@ export function startTelegram(engine: TradingEngine) {
   bot.command('cuzdanlar', (ctx) => {
     const rows = storedReports();
     if (!rows.length) return ctx.reply('Henüz analiz edilmiş cüzdan yok. /kesif ya da /cuzdanekle');
-    return ctx.reply(formatWalletList(rows), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+    return replyHtml(ctx, formatWalletList(rows));
   });
 
   bot.command('cuzdan', (ctx) => {
@@ -247,10 +270,7 @@ export function startTelegram(engine: TradingEngine) {
           ? `• Giriş öncesi 5dk fiyat: %${round(m.medianPreChange5m, 1)}, hacim artışı x${round(m.medianVolumeSurge, 1)}, hareketin %${Math.round(m.medianCaptureRatio * 100)}'ini yakalıyor`
           : '• Bağlam verisi yok (/zenginlestir)',
     ];
-    return ctx.reply([...header, ...body.map(escapeHtml)].join('\n'), {
-      parse_mode: 'HTML',
-      link_preview_options: { is_disabled: true },
-    });
+    return replyHtml(ctx, [...header, ...body.map(escapeHtml)].join('\n'));
   });
 
   bot.command('analiz', (ctx) => {
