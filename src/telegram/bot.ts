@@ -18,6 +18,7 @@ import { kv, tokens, wallets } from '../storage/repo.js';
 import { fmtDuration, fmtUsd } from '../strategy/describe.js';
 import { extractFromWallets, runExtraction } from '../strategy/pipeline.js';
 import { strategies } from '../strategy/registry.js';
+import { buildDailySummary, collectSummaryData } from '../summary.js';
 
 const log = childLogger('telegram');
 const SOLANA_ADDR = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -28,6 +29,7 @@ const HELP = `CryptoFincher komutları
 /durum: mod, bakiye, açık pozisyonlar, kredi
 /pozisyonlar: açık pozisyonlar
 /pnl: gerçekleşen kâr/zarar
+/ozet: günlük özet (her sabah otomatik de gelir)
 
 🧠 Analiz
 /kesif: kazanan tokenları bul, cüzdan keşfet, analiz et, strateji çıkar (uçtan uca)
@@ -114,6 +116,8 @@ export function startTelegram(engine: TradingEngine) {
       ].join('\n'),
     );
   });
+
+  bot.command('ozet', (ctx) => ctx.reply(buildDailySummary(collectSummaryData())));
 
   bot.command('pozisyonlar', async (ctx) => {
     const open = positionsRepo.listOpen();
@@ -407,6 +411,7 @@ export function startTelegram(engine: TradingEngine) {
     { command: 'kesif', description: 'Keşif + analiz + strateji' },
     { command: 'stratejiler', description: 'Strateji listesi' },
     { command: 'walkforward', description: 'Görülmemiş veride doğrulama' },
+    { command: 'ozet', description: 'Günlük özet' },
     { command: 'pozisyonlar', description: 'Açık pozisyonlar' },
     { command: 'pnl', description: 'Kâr/zarar' },
     { command: 'cuzdanlar', description: 'En iyi cüzdanlar' },

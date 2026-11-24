@@ -34,9 +34,13 @@ export class HeliusQuotaError extends HeliusLimitError {}
 export const QUOTA_RE = /credit|quota|max usage|usage limit|upgrade your plan|payment required/i;
 
 /** Sayaç anahtar başına tutulur: yeni anahtar girildiğinde sıfırdan başlar */
-const monthKey = () => `helius_credits:${new Date().toISOString().slice(0, 7)}:${heliusKeyId()}`;
+const monthKey = () => `helius_credits:${heliusCredits.period()}:${heliusKeyId()}`;
 
 export const heliusCredits = {
+  /** Sayacın ait olduğu dönem (YYYY-AA, UTC) */
+  period(): string {
+    return new Date().toISOString().slice(0, 7);
+  },
   used(): number {
     return kv.get<number>(monthKey(), 0);
   },

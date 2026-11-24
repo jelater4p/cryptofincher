@@ -89,6 +89,10 @@ const schema = z.object({
   /** Tarafsız evrende kayıtlar kaç gün saklansın */
   UNIVERSE_RETENTION_DAYS: num(120),
 
+  /** Günlük özet saati (SUMMARY_TIMEZONE saatiyle, 0-23). -1 = kapalı */
+  DAILY_SUMMARY_HOUR: num(9),
+  SUMMARY_TIMEZONE: z.string().default('Europe/Istanbul'),
+
   ANALYSIS_MAX_TX_PER_WALLET: num(400),
   ANALYSIS_MIN_CLOSED_POSITIONS: num(8),
   DISCOVERY_EARLY_BUYERS_PER_TOKEN: num(60),
