@@ -29,7 +29,8 @@ async function main() {
   if (config.TRADING_MODE === 'paper') engineState.setMode('paper');
   else if (live && engineState.mode() !== 'live') engineState.setMode('live');
 
-  await solPriceService.syncHistory();
+  // arka planda: GeckoTerminal yavaşsa ya da erişilemezse Telegram ve motorun açılışını geciktirmesin
+  void solPriceService.syncHistory();
   setInterval(() => void solPriceService.syncHistory(), 24 * 3600_000);
 
   const engine = new TradingEngine({ paper: new PaperExecutor(), live });
