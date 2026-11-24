@@ -11,6 +11,7 @@ import { RateLimiter } from '../src/core/rateLimiter.js';
 import { openDb, setDb } from '../src/storage/db.js';
 import { kv } from '../src/storage/repo.js';
 import { heliusCredits, CreditBudgetExceeded } from '../src/data/helius.js';
+import { heliusKeyId } from '../src/data/heliusAlert.js';
 import { strategies } from '../src/strategy/registry.js';
 import { positionsRepo } from '../src/engine/positionsRepo.js';
 
@@ -77,7 +78,7 @@ describe('altyapı', () => {
   });
 
   it('Helius kredi bütçesi: analiz %95 sınırında durur, işlemler devam eder', () => {
-    const month = `helius_credits:${new Date().toISOString().slice(0, 7)}`;
+    const month = `helius_credits:${new Date().toISOString().slice(0, 7)}:${heliusKeyId()}`;
     kv.set(month, heliusCredits.analysisAllowance() - 5);
     expect(() => heliusCredits.charge('getTransaction', 'analysis')).toThrow(CreditBudgetExceeded);
     expect(() => heliusCredits.charge('getTransaction', 'trading')).not.toThrow();

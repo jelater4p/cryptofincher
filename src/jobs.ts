@@ -1,7 +1,7 @@
 import { childLogger } from './core/logger.js';
 import { enrichTrips } from './analysis/enrich.js';
 import { analyzeWallet, loadAnalyzedTrips, storedReports } from './analysis/walletAnalyzer.js';
-import { CreditBudgetExceeded, heliusCredits } from './data/helius.js';
+import { HeliusLimitError, heliusCredits } from './data/helius.js';
 import { solPriceService } from './data/solPrice.js';
 import { runDiscovery } from './discovery/discovery.js';
 import { events } from './engine/state.js';
@@ -24,7 +24,8 @@ export async function runJob<T>(name: string, fn: () => Promise<T>): Promise<T |
   try {
     return await fn();
   } catch (err) {
-    if (err instanceof CreditBudgetExceeded) events.emit('notify', `💳 ${err.message}. Analiz işleri ay sonuna kadar duraklatıldı.`);
+    // ayrıntılı uyarı ve hatırlatmalar heliusAlert tarafından gönderiliyor
+    if (err instanceof HeliusLimitError) events.emit('notify', `⏸ ${name} durdu: ${err.message}`);
     else events.emit('notify', `❌ ${name} hatası: ${String(err).slice(0, 300)}`);
     log.error({ err: String(err) }, `${name} hatası`);
     return undefined;
@@ -48,7 +49,7 @@ export async function analyzePending(limit = 20, staleMs = 3 * 86400_000) {
       const r = await analyzeWallet(w.address);
       if ('eligible' in r && r.eligible) eligible++;
     } catch (err) {
-      if (err instanceof CreditBudgetExceeded) throw err;
+      if (err instanceof HeliusLimitError) throw err;
       log.warn({ address: w.address, err: String(err) }, 'analiz başarısız');
     }
   }

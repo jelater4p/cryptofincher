@@ -1,5 +1,6 @@
 import { config } from '../config.js';
-import { fetchJson } from '../core/http.js';
+import { fetchJson, HttpError } from '../core/http.js';
+import { heliusAlert, heliusKeyId } from './heliusAlert.js';
 import { RateLimiter } from '../core/rateLimiter.js';
 import { childLogger } from '../core/logger.js';
 import type { RawTx, TokenBalance } from '../core/types.js';
@@ -17,13 +18,23 @@ const CREDIT_COST: Record<string, number> = {
   default: 1,
 };
 
-export class CreditBudgetExceeded extends Error {
+/** Helius kullanılamıyor (bütçe, kota ya da anahtar sorunu): işler bu hatada durur, tekrar denenmez */
+export class HeliusLimitError extends Error {}
+
+export class CreditBudgetExceeded extends HeliusLimitError {
   constructor(used: number, limit: number) {
     super(`Helius aylık kredi bütçesi doldu: ${used}/${limit}`);
   }
 }
 
-const monthKey = () => `helius_credits:${new Date().toISOString().slice(0, 7)}`;
+export class HeliusQuotaError extends HeliusLimitError {}
+
+/** Helius'un kredi/limit bitti cevaplarını tanımak için */
+// Dikkat: düz hız limiti ("rate limit exceeded") burada eşleşmemeli; o geçicidir ve yeniden denenir.
+export const QUOTA_RE = /credit|quota|max usage|usage limit|upgrade your plan|payment required/i;
+
+/** Sayaç anahtar başına tutulur: yeni anahtar girildiğinde sıfırdan başlar */
+const monthKey = () => `helius_credits:${new Date().toISOString().slice(0, 7)}:${heliusKeyId()}`;
 
 export const heliusCredits = {
   used(): number {
@@ -40,10 +51,17 @@ export const heliusCredits = {
     const cost = CREDIT_COST[method] ?? CREDIT_COST.default!;
     const used = this.used();
     const cap = priority === 'trading' ? this.limit() : this.analysisAllowance();
-    if (used + cost > cap) throw new CreditBudgetExceeded(used, cap);
+    if (used + cost > cap) {
+      heliusAlert.raise('budget', `bu ay ${used.toLocaleString()} / ${this.limit().toLocaleString()} kredi kullanıldı`);
+      throw new CreditBudgetExceeded(used, cap);
+    }
     kv.set(monthKey(), used + cost);
   },
 };
+
+/** Ardışık başarısız 429 sayısı: anahtar mesaj vermeden sürekli reddediliyorsa uyarı için */
+let consecutive429 = 0;
+const PERSISTENT_429 = 5;
 
 export interface SignatureInfo {
   signature: string;
@@ -57,14 +75,53 @@ export class HeliusClient {
   private id = 0;
 
   async rpc<T>(method: string, params: unknown[], priority: 'analysis' | 'trading' = 'analysis'): Promise<T> {
-    if (!config.HELIUS_API_KEY && !config.HELIUS_RPC_URL) throw new Error('HELIUS_API_KEY tanımlı değil');
+    if (!config.HELIUS_API_KEY && !config.HELIUS_RPC_URL) {
+      heliusAlert.raise('auth', '.env içinde HELIUS_API_KEY boş');
+      throw new HeliusLimitError('HELIUS_API_KEY tanımlı değil');
+    }
     heliusCredits.charge(method, priority);
-    const res = await fetchJson<{ result?: T; error?: { code: number; message: string } }>(config.heliusRpcUrl, {
-      body: { jsonrpc: '2.0', id: ++this.id, method, params },
-      limiter: this.limiter,
-    });
-    if (res.error) throw new Error(`RPC ${method}: ${res.error.code} ${res.error.message}`);
+    let res: { result?: T; error?: { code: number; message: string } };
+    try {
+      res = await fetchJson(config.heliusRpcUrl, {
+        body: { jsonrpc: '2.0', id: ++this.id, method, params },
+        limiter: this.limiter,
+        // kredi bittiyse ya da anahtar geçersizse tekrar denemek boşuna
+        noRetryIf: (status, body) => status === 402 || (status === 429 && QUOTA_RE.test(body)),
+      });
+    } catch (err) {
+      throw this.classify(err);
+    }
+    consecutive429 = 0;
+    if (res.error) {
+      const msg = `${res.error.code} ${res.error.message}`;
+      if (QUOTA_RE.test(res.error.message) || res.error.code === -32429) {
+        heliusAlert.raise('quota', msg.slice(0, 200));
+        throw new HeliusQuotaError(`RPC ${method}: ${msg}`);
+      }
+      throw new Error(`RPC ${method}: ${msg}`);
+    }
+    // başarılı çağrı: sunucu tarafı uyarı varsa kalkar (bütçe uyarısı yeni ay/anahtarla kalkar)
+    const alert = heliusAlert.get();
+    if (alert && alert.kind !== 'budget') heliusAlert.clear('Helius istekleri tekrar yanıtlanıyor');
     return res.result as T;
+  }
+
+  private classify(err: unknown): unknown {
+    if (!(err instanceof HttpError)) return err;
+    const body = err.body.slice(0, 200);
+    if (err.status === 401 || err.status === 403) {
+      heliusAlert.raise('auth', `HTTP ${err.status} ${body}`.trim());
+      return new HeliusLimitError(`Helius anahtarı reddedildi (HTTP ${err.status})`);
+    }
+    if (err.status === 402 || (err.status === 429 && QUOTA_RE.test(err.body))) {
+      heliusAlert.raise('quota', `HTTP ${err.status} ${body}`.trim());
+      return new HeliusQuotaError(`Helius kredisi/limiti bitti (HTTP ${err.status})`);
+    }
+    if (err.status === 429 && ++consecutive429 >= PERSISTENT_429) {
+      heliusAlert.raise('quota', `art arda ${consecutive429} istek 429 ile reddedildi`);
+      return new HeliusQuotaError('Helius istekleri sürekli reddediliyor (429)');
+    }
+    return err;
   }
 
   getSignaturesForAddress(address: string, opts: { before?: string; until?: string; limit?: number } = {}) {

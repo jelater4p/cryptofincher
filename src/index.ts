@@ -5,7 +5,7 @@ import { solPriceService } from './data/solPrice.js';
 import { TradingEngine } from './engine/engine.js';
 import { LiveExecutor, PaperExecutor, type Executor } from './engine/executor.js';
 import { engineState } from './engine/state.js';
-import { fullPipeline, runJob } from './jobs.js';
+import { startMonitor } from './monitor.js';
 import { getDb } from './storage/db.js';
 import { startTelegram } from './telegram/bot.js';
 import { loadKeystore, readPassphrase } from './wallet/keystore.js';
@@ -37,11 +37,9 @@ async function main() {
   engine.start();
   startTelegram(engine);
 
-  const hours = Number(process.env.DISCOVERY_INTERVAL_HOURS ?? 0);
-  if (hours > 0) {
-    setInterval(() => void runJob('zamanlanmış keşif', () => fullPipeline()), hours * 3600_000);
-    logger.info({ hours }, 'zamanlanmış keşif açık');
-  }
+  // Helius limit uyarıları + hatırlatmalar ve zamanlanmış keşif
+  startMonitor();
+  if (config.DISCOVERY_INTERVAL_HOURS > 0) logger.info({ hours: config.DISCOVERY_INTERVAL_HOURS }, 'zamanlanmış keşif açık');
 
   const shutdown = () => {
     logger.info('kapanıyor');
