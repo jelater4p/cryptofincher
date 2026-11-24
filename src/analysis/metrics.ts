@@ -1,5 +1,5 @@
 import { mean, median, quantile, stdev, sum } from '../core/stats.js';
-import type { TokenInfo } from '../core/types.js';
+import { tokenLaunchMs, type TokenInfo } from '../core/types.js';
 import type { TripContext } from '../storage/repo.js';
 import type { RoundTrip } from './positions.js';
 
@@ -105,7 +105,10 @@ export function annotateTrips(
     const tok = tokenLookup(t.mint);
     const firstBuy = t.buys[0];
     let entryDelaySec: number | undefined;
-    if (tok?.pairCreatedAt && firstBuy) entryDelaySec = Math.max(0, firstBuy.ts - tok.pairCreatedAt / 1000);
+    // çıkış zamanına göre: pump.fun tokenı PumpSwap'a geçince en likit havuzun açılışı girişten SONRA olur
+    // ve erken alıcılar yanlışlıkla "0 saniyede girmiş" (sniper) görünürdü
+    const launch = tok ? tokenLaunchMs(tok) : undefined;
+    if (launch && firstBuy) entryDelaySec = Math.max(0, firstBuy.ts - launch / 1000);
     let entryMcapUsd: number | undefined;
     const supply = tok?.supply ?? (tok?.marketCapUsd && tok.priceUsd ? tok.marketCapUsd / tok.priceUsd : undefined);
     const solUsd = firstBuy ? solUsdAt(firstBuy.ts) : undefined;

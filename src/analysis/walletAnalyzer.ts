@@ -9,6 +9,7 @@ import { annotateTrips, computeWalletMetrics, type AnalyzedTrip, type WalletMetr
 import { buildRoundTrips } from './positions.js';
 import { computeFlags, isEligible, skillScore, type WalletFlag } from './scoring.js';
 import { parseWalletTx } from './swapParser.js';
+import type { SwapEvent, TransferEvent } from '../core/types.js';
 
 const log = childLogger('analyzer');
 
@@ -45,22 +46,40 @@ export async function syncWallet(address: string, maxTx = config.ANALYSIS_MAX_TX
   }
   const todo = sigs.filter((s) => !s.err && !seen.has(address, s.signature));
   let fetched = 0;
-  const swapBuf = [];
-  const xferBuf = [];
-  for (const s of todo) {
-    const tx = await helius.getTransaction(s.signature);
-    fetched++;
-    if (!tx) continue;
-    const r = parseWalletTx(tx, address, (ts) => solPriceService.at(ts));
-    swapBuf.push(...r.swaps);
-    xferBuf.push(...r.transfers);
-    if (fetched % 50 === 0) log.debug({ address, fetched, total: todo.length }, 'senkron');
+  const swapBuf: SwapEvent[] = [];
+  const xferBuf: TransferEvent[] = [];
+  const processed: string[] = [];
+  /**
+   * Yarıda hata olursa (kredi bitti, ağ hatası) o ana kadar çekilenler yine kaydedilir: kredi boşa gitmesin.
+   * Ama en yeni imza sadece tamamlanınca güncellenir; bir sonraki senkron kalanları alır, işlenmişleri atlar.
+   */
+  const flush = () => {
+    swaps.insertMany(swapBuf.splice(0));
+    transfers.insertMany(xferBuf.splice(0));
+    seen.addMany(address, processed.splice(0));
+  };
+  try {
+    for (const s of todo) {
+      const tx = await helius.getTransaction(s.signature);
+      fetched++;
+      if (tx) {
+        const r = parseWalletTx(tx, address, (ts) => solPriceService.at(ts));
+        swapBuf.push(...r.swaps);
+        xferBuf.push(...r.transfers);
+      }
+      processed.push(s.signature);
+      if (fetched % 50 === 0) {
+        flush();
+        log.debug({ address, fetched, total: todo.length }, 'senkron');
+      }
+    }
+  } finally {
+    flush();
   }
-  swaps.insertMany(swapBuf);
-  transfers.insertMany(xferBuf);
+  // hatalı (err) işlemler de görüldü sayılır
   seen.addMany(address, sigs.map((s) => s.signature));
   wallets.markAnalyzed(address, sigs[0]?.signature ?? null);
-  return { fetched, swaps: swapBuf.length };
+  return { fetched };
 }
 
 /** Eksik ya da eski token bilgilerini DexScreener'dan tamamlar */

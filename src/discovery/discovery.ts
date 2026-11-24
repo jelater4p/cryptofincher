@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { childLogger } from '../core/logger.js';
-import type { TokenInfo } from '../core/types.js';
+import { tokenLaunchMs, type TokenInfo } from '../core/types.js';
 import { dexscreener } from '../data/dexscreener.js';
 import { helius, HeliusLimitError } from '../data/helius.js';
 import { parseWalletTx } from '../analysis/swapParser.js';
@@ -25,8 +25,9 @@ const DEFAULT_CRITERIA: WinnerTokenCriteria = {
 
 /** "Kazanan" token: likit, güçlü yükselmiş, çok yeni değil (erken alıcılar belirginleşmiş) */
 export function isWinnerToken(t: TokenInfo, c = DEFAULT_CRITERIA, now = Date.now()) {
-  if (!t.pairAddress || !t.pairCreatedAt) return false;
-  const ageH = (now - t.pairCreatedAt) / 3600_000;
+  const launch = tokenLaunchMs(t);
+  if (!t.pairAddress || !launch) return false;
+  const ageH = (now - launch) / 3600_000;
   return (
     (t.liquidityUsd ?? 0) >= c.minLiquidityUsd &&
     ageH >= c.minAgeHours &&

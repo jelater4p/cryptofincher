@@ -95,6 +95,14 @@ export const positionsRepo = {
       }
     })();
   },
+  /** Satılamayan pozisyonu kapatır (kalan tokenlar 0 değerli sayılır). Sadece açıksa etkiler. */
+  forceClose(id: number, reason: string): boolean {
+    return (
+      getDb()
+        .prepare("UPDATE positions SET status = 'closed', closed_at = ?, exit_reason = ?, remaining_tokens = 0 WHERE id = ? AND status = 'open'")
+        .run(Date.now(), reason, id).changes > 0
+    );
+  },
   recordBuyFill(id: number, f: { tokens: number; sol: number; price: number; signature?: string }) {
     getDb()
       .prepare('INSERT INTO fills(position_id, side, sol_amount, token_amount, price_sol, signature, reason, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
